@@ -10,9 +10,42 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_22_000002) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_22_000004) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "order_items", force: :cascade do |t|
+    t.bigint "order_id", null: false
+    t.bigint "product_id", null: false
+    t.integer "quantity", null: false
+    t.integer "unit_price", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["order_id", "product_id"], name: "index_order_items_on_order_id_and_product_id", unique: true
+    t.index ["product_id"], name: "index_order_items_on_product_id"
+    t.check_constraint "quantity > 0", name: "order_items_quantity_positive"
+    t.check_constraint "unit_price >= 0", name: "order_items_unit_price_non_negative"
+  end
+
+  create_table "orders", force: :cascade do |t|
+    t.bigint "restaurant_id", null: false
+    t.integer "order_type", null: false
+    t.string "customer_name", null: false
+    t.string "customer_phone", null: false
+    t.string "delivery_address"
+    t.integer "client_total_amount"
+    t.integer "total_amount", null: false
+    t.integer "dispatch_status", default: 0, null: false
+    t.text "last_dispatch_error"
+    t.datetime "dispatched_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["restaurant_id"], name: "index_orders_on_restaurant_id"
+    t.check_constraint "client_total_amount >= 0", name: "orders_client_total_amount_non_negative"
+    t.check_constraint "dispatch_status = ANY (ARRAY[0, 1, 2])", name: "orders_dispatch_status_valid"
+    t.check_constraint "order_type = ANY (ARRAY[0, 1])", name: "orders_order_type_valid"
+    t.check_constraint "total_amount >= 0", name: "orders_total_amount_non_negative"
+  end
 
   create_table "products", force: :cascade do |t|
     t.string "name", null: false
@@ -32,4 +65,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_000002) do
     t.datetime "updated_at", null: false
     t.index ["code"], name: "index_restaurants_on_code", unique: true
   end
+
+  add_foreign_key "order_items", "orders"
+  add_foreign_key "order_items", "products"
+  add_foreign_key "orders", "restaurants"
 end

@@ -31,6 +31,9 @@ Rails.application.configure do
   # Store uploaded files on the local file system in a temporary directory.
   config.active_storage.service = :test
 
+  # Keep foreign keys enforced without Rails' superuser-only catalog verification.
+  config.active_record.verify_foreign_keys_for_fixtures = false
+
   # Tell Action Mailer not to deliver emails to the real world.
   # The :test delivery method accumulates sent emails in the
   # ActionMailer::Base.deliveries array.

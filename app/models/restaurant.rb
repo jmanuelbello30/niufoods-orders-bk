@@ -1,6 +1,8 @@
 require "uri"
 
 class Restaurant < ApplicationRecord
+  has_many :orders, inverse_of: :restaurant
+
   validates :name, :code, :dispatch_url, presence: true
   validates :code, uniqueness: true
   validate :dispatch_url_must_be_http_with_host
