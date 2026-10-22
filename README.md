@@ -1,24 +1,37 @@
-# README
+# Niu Foods Orders
 
-This README would normally document whatever steps are necessary to get the
-application up and running.
+## Catálogo de referencia
 
-Things you may want to cover:
+Con las migraciones aplicadas, confirmar primero la base de desarrollo:
 
-* Ruby version
+```sh
+RAILS_ENV=development bin/rails runner 'database = ActiveRecord::Base.connection.select_value("SELECT current_database()"); puts database; abort "Unexpected database" unless database == "niufoods_orders_development"'
+RAILS_ENV=development bin/rails db:seed
+```
 
-* System dependencies
+Si Ruby no está en `PATH`, anteponer `~/.local/bin/mise exec --` a `bin/rails`
+en ambos comandos. Revisar la conexión antes de ejecutar; `DATABASE_URL` puede
+cambiar el destino configurado.
 
-* Configuration
+Los seeds cargan los 10 productos (IDs 1–10) con precios enteros CLP y los
+3 restaurantes (IDs 1–3) del dataset de referencia. Usan las validaciones de
+los modelos y una única transacción para evitar cargas parciales.
 
-* Database creation
+La carga puede repetirse: los registros existentes que coinciden exactamente
+se conservan, sin duplicarlos ni cambiar sus timestamps. Si un ID, SKU o código
+está ocupado por un registro diferente, o los atributos de un registro de
+referencia han cambiado, la carga falla con `Seed conflict` y se revierte completa.
+No borra ni sobrescribe registros; los registros ajenos sin conflictos se conservan.
+Al terminar, ajusta las secuencias PostgreSQL al máximo ID de cada tabla para
+que las siguientes inserciones automáticas no colisionen.
 
-* Database initialization
+### Destinos locales de despacho
 
-* How to run the test suite
+| ID | Restaurante | Código | URL |
+| --- | --- | --- | --- |
+| 1 | Niu Foods Providencia | PROV | `http://localhost:4567/restaurants/PROV/orders` |
+| 2 | Niu Foods Las Condes | LCON | `http://localhost:4567/restaurants/LCON/orders` |
+| 3 | Niu Foods Ñuñoa | NUNO | `http://localhost:4567/restaurants/NUNO/orders` |
 
-* Services (job queues, cache servers, search engines, etc.)
-
-* Deployment instructions
-
-* ...
+El futuro receptor deberá aceptar los despachos por HTTP POST en esas tres
+rutas. El receptor no está implementado; ejecutar los seeds no envía solicitudes.
