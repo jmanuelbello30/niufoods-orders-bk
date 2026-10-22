@@ -33,8 +33,8 @@ que las siguientes inserciones automáticas no colisionen.
 | 2 | Niu Foods Las Condes | LCON | `http://localhost:4567/restaurants/LCON/orders` |
 | 3 | Niu Foods Ñuñoa | NUNO | `http://localhost:4567/restaurants/NUNO/orders` |
 
-El futuro receptor deberá aceptar los despachos por HTTP POST en esas tres
-rutas. El receptor no está implementado; ejecutar los seeds no envía solicitudes.
+El receptor local descrito más abajo acepta HTTP POST en esas tres rutas.
+Ejecutar los seeds no envía solicitudes.
 
 ## Creación de órdenes
 
@@ -105,3 +105,110 @@ Los errores de estructura usan `invalid_structure`. Los demás errores de
 validación también responden HTTP 422 bajo `errors`, con `field`, `code` y
 `message`. Un cuerpo JSON malformado responde HTTP 400 con `invalid_json`,
 sin detalles internos de la excepción.
+
+## Receptor de tienda simulada
+
+Es un proceso Rack/Puma independiente: no inicia Rails ni consulta su base de
+datos. Usa las dependencias existentes, sin gemas adicionales.
+
+### Inicio y detención
+
+Desde la raíz del proyecto, iniciar en primer plano:
+
+```sh
+~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb
+```
+
+Escucha solamente en loopback, `127.0.0.1:4567` (`localhost:4567`). Detener con
+`Ctrl+C`. Para iniciarlo en segundo plano y detener exactamente ese proceso
+desde la misma terminal:
+
+```sh
+~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb &
+receiver_pid=$!
+```
+
+Cuando termines, en esa misma terminal:
+
+```sh
+kill -TERM "$receiver_pid"
+wait "$receiver_pid"
+```
+
+La detención mediante `SIGINT` o `SIGTERM` espera a que terminen las solicitudes
+en curso. No se crean archivos PID ni datos persistentes.
+
+### Simulación
+
+| Variable | Valor predeterminado | Comportamiento |
+| --- | --- | --- |
+| `STORE_PORT` | `4567` | Puerto local, entre 1 y 65535. |
+| `STORE_MODE` | `success` | `success`, `error` o `delay`. |
+| `STORE_DELAY_SECONDS` | `6` | Demora finita y no negativa, en segundos; solo se aplica en `delay`. |
+
+```sh
+STORE_MODE=error ~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb
+STORE_MODE=delay STORE_DELAY_SECONDS=6 ~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb
+STORE_PORT=4568 ~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb
+```
+
+`error` responde HTTP 503 sin aceptar. En `delay`, la orden se acepta **después**
+de esperar. Si el emisor alcanza su timeout, el receptor puede aceptarla luego;
+un reenvío posterior devuelve una confirmación de duplicado sin volver a esperar.
+Cambiar el puerto requiere ajustar el destino del emisor; los seeds usan 4567.
+
+### Payload y confirmación
+
+El contrato completo para el futuro emisor está en
+[`docs/alcance.md`](docs/alcance.md#contrato-del-receptor-simulado). El receptor
+solo comprueba la estructura mínima y los identificadores; no recalcula precios
+ni totales y no comprueba la existencia de productos en Rails.
+
+Ejemplo con datos ficticios, independiente de las órdenes de la base:
+
+```sh
+curl -i http://localhost:4567/restaurants/PROV/orders \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "order_id": 9001,
+    "restaurant_id": 1,
+    "order_type": "pickup",
+    "customer": { "name": "Test Customer", "phone": "+56000000000" },
+    "delivery_address": null,
+    "total_amount": 17980,
+    "items": [ { "product_id": 1, "quantity": 2, "unit_price": 8990 } ]
+  }'
+```
+
+Respuesta HTTP 200 con `Content-Type: application/json`:
+
+```json
+{
+  "data": {
+    "accepted": true,
+    "order_id": 9001,
+    "restaurant_id": 1,
+    "duplicate": false
+  }
+}
+```
+
+Al repetir el mismo envío al mismo restaurante, devuelve HTTP 200 con
+`duplicate: true`, sin una segunda aceptación. El mismo `order_id` en otro
+restaurante tiene una clave distinta. La comprobación y el registro están
+protegidos con un mutex, incluso ante solicitudes concurrentes.
+
+La memoria de IDs es local a un solo proceso, crece con las recepciones y se
+pierde al reiniciar. No existe persistencia, coordinación entre procesos ni
+autenticación: es un simulador local, no un receptor de producción. La consola
+solo registra restaurante, identificador válido y resultado, nunca cliente,
+teléfono, dirección ni payload completo.
+
+Las pruebas del receptor pueden ejecutarse sin Rails ni PostgreSQL:
+
+```sh
+~/.local/bin/mise exec -- bundle exec ruby -Itest test/lib/store_receiver_test.rb
+```
+
+Este incremento no implementa el emisor HTTP ni cambia estados de órdenes de
+Rails. `POST /api/v1/orders` sigue creando órdenes en `pending` sin despacharlas.

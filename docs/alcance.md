@@ -128,6 +128,66 @@ Unicidad compuesta de `order_id` y `product_id`.
 - La confirmación de recepción no implica preparación ni entrega.
 - Los timeouts siguen siendo valores iniciales propuestos: conexión 2 s, lectura 5 s.
 
+### Contrato del receptor simulado
+
+El receptor independiente recibe `POST` con `Content-Type: application/json`
+en `/restaurants/PROV/orders`, `/restaurants/LCON/orders` y
+`/restaurants/NUNO/orders`. Los destinos corresponden respectivamente a
+`restaurant_id` 1, 2 y 3 del catálogo de referencia; no consulta la base de Rails.
+
+El futuro emisor enviará un objeto JSON directamente en la raíz:
+
+```json
+{
+  "order_id": 9001,
+  "restaurant_id": 1,
+  "order_type": "pickup",
+  "customer": { "name": "Test Customer", "phone": "+56000000000" },
+  "delivery_address": null,
+  "total_amount": 17980,
+  "items": [ { "product_id": 1, "quantity": 2, "unit_price": 8990 } ]
+}
+```
+
+- `order_id`, `restaurant_id` y cada `product_id` son enteros positivos.
+- `restaurant_id` debe coincidir con el destino de la ruta.
+- `order_type` es `"pickup"` o `"delivery"`.
+- `customer` contiene `name` y `phone` como strings no vacíos.
+- `delivery_address` puede omitirse o ser `null` para pickup; para delivery es un string no vacío.
+- `total_amount` y cada `unit_price` son enteros no negativos en CLP.
+- `items` es un array no vacío de objetos con `product_id`, `quantity` y `unit_price`; `quantity` es un entero positivo.
+- Los precios unitarios y el total son los valores históricos persistidos por Rails. El receptor valida su tipo, pero no los recalcula ni verifica productos contra un catálogo.
+- `client_total_amount` y los campos de estado de despacho no forman parte del payload requerido. Los atributos adicionales no intervienen en la aceptación.
+
+La recepción y los reenvíos ya aceptados responden HTTP 200 con:
+
+```json
+{
+  "data": {
+    "accepted": true,
+    "order_id": 9001,
+    "restaurant_id": 1,
+    "duplicate": false
+  }
+}
+```
+
+Un duplicado conserva esa confirmación y devuelve `duplicate: true`. El futuro
+emisor deberá comprobar HTTP 200, `accepted: true` y que ambos identificadores
+coincidan con el despacho. La confirmación no implica preparación ni entrega.
+
+Los errores usan `errors` con `field`, `code` y `message`: HTTP 400 para JSON
+malformado, 404 para ruta desconocida, 405 para método no permitido (con
+`Allow: POST`), 415 para tipo de contenido distinto de JSON, 422 para payload o
+identificadores inválidos y 503 para el fallo simulado.
+
+Los modos son `success`, `error` y `delay`. El modo error no acepta la orden.
+En demora se acepta después de esperar; un timeout o cierre del emisor no
+cancela esa aceptación posterior. Un reenvío ya aceptado se confirma sin otra
+demora. La memoria de duplicados se limita a pares restaurante/orden en un solo
+proceso, con acceso sincronizado; reiniciarlo borra esa memoria. No se conserva
+el payload ni se añade persistencia.
+
 ## Interfaz
 
 - Backend primero.
