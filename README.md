@@ -418,3 +418,120 @@ El listado precarga solo restaurantes; no consulta ítems ni productos. El detal
 precarga restaurante, ítems y productos para evitar consultas adicionales por
 cada registro. Estas representaciones no cambian las respuestas de creación ni
 de reintento.
+
+## Simulador de órdenes
+
+`script/simulate_orders.rb` es un cliente HTTP independiente que usa Net::HTTP y
+JSON. No carga Rails ni accede directamente a PostgreSQL. Requiere Ruby y una
+API con las migraciones aplicadas y los seeds de referencia cargados según la
+sección «Catálogo de referencia».
+
+**Ejecutarlo contra una API real crea órdenes. Repetirlo crea órdenes nuevas,
+incluso con la misma semilla.** No elimina lo generado ni reinicia bases. Los
+ejemplos siguientes son instrucciones de ejecución manual, no una verificación
+automática sobre desarrollo.
+
+### Tres terminales
+
+En la primera terminal, iniciar Rails desde la raíz del proyecto:
+
+```sh
+~/.local/bin/mise exec -- bin/rails server
+```
+
+En la segunda, iniciar el receptor local; detenerlo con `Ctrl+C` al terminar:
+
+```sh
+~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb
+```
+
+En la tercera, ejecutar el simulador:
+
+```sh
+~/.local/bin/mise exec -- ruby script/simulate_orders.rb
+```
+
+O configurar la cantidad y una semilla reproducible:
+
+```sh
+API_BASE_URL=http://localhost:3000 ORDER_COUNT=12 RANDOM_SEED=42 \
+  ~/.local/bin/mise exec -- ruby script/simulate_orders.rb
+```
+
+El simulador termina después de sus escenarios. Rails y el receptor se detienen
+con `Ctrl+C` en sus respectivas terminales. No es necesario borrar órdenes.
+
+### Configuración y escenarios
+
+| Variable | Predeterminado | Validación |
+| --- | --- | --- |
+| `API_BASE_URL` | `http://localhost:3000` | HTTP/HTTPS con host y puerto entre 1 y 65535, sin credenciales, query ni fragmento. Un prefijo como `/prefix` produce `/prefix/api/v1/orders`. |
+| `ORDER_COUNT` | `6` | Entero positivo: número de escenarios válidos. |
+| `RANDOM_SEED` | Aleatoria, impresa en consola | Entero opcional para reproducir payloads. |
+
+Con al menos seis órdenes se cubren PROV, LCON y NUNO con pickup y delivery.
+Cada orden tiene entre uno y tres productos distintos, cantidades entre uno y
+cuatro y datos de cliente ficticios; delivery incluye una dirección ficticia.
+Se alternan el monto declarado omitido y el coincidente.
+
+Los precios locales se usan exclusivamente para construir `client_total_amount`.
+La API sigue calculando el total con su catálogo. Los escenarios coincidentes
+presuponen los IDs y precios originales de los seeds; cambiar el catálogo puede
+producir resultados inesperados, que el script informa sin modificarlo.
+
+Después se ejecutan cinco casos inválidos, de modo que el valor predeterminado
+produce once POST en total:
+
+| Escenario | Error esperado |
+| --- | --- |
+| `quantity_zero` | `items[0].quantity` / `greater_than` |
+| `product_not_found` | `items[0].product_id` / `blank` |
+| `duplicate_product` | `items` / `invalid`, con mensaje `must not contain duplicate products` |
+| `delivery_without_address` | `delivery_address` / `blank` |
+| `total_mismatch` | `client_total_amount` / `total_mismatch` |
+
+No basta un 422 cualquiera: debe contener el error esperado. Para productos
+repetidos se exige también el mensaje porque `invalid` es un código genérico.
+Si un caso inválido se acepta o falla por otra causa, se registra como inesperado.
+
+### Resultados y códigos
+
+Por cada POST se imprimen escenario, restaurante, tipo, HTTP, ID, total y estado
+de despacho cuando están disponibles. Los errores se muestran como
+`field`/`code`/`message`, sin imprimir el payload, el cliente ni la dirección.
+Ejemplo ilustrativo, no obtenido ejecutando el simulador contra desarrollo:
+
+```text
+scenario=valid_1 restaurant=1 order_type=pickup http=201 id=9001 total=8990 dispatch_status=sent result=created
+scenario=valid_2 restaurant=1 order_type=delivery http=201 id=9002 total=17980 dispatch_status=error result=created_dispatch_error
+Summary created=6 sent=5 error=1 pending=0 expected_rejections=5 unexpected_failures=0
+```
+
+HTTP 201 con estado `error` significa **orden creada con fallo de despacho**;
+no es un rechazo de validación. Se cuenta entre las creaciones y separadamente
+en `error`. Un 422 esperado no crea una orden y aumenta `expected_rejections`.
+Las respuestas 201 válidas que acepten un escenario inválido también se cuentan
+como creaciones, pero aumentan `unexpected_failures`.
+
+| Código de salida | Significado |
+| --- | --- |
+| `0` | Todos los escenarios cumplen la expectativa de creación o rechazo. Puede haber creaciones con despacho `error`; revisar el resumen. |
+| `1` | Fallos inesperados de transporte, respuesta JSON, estructura, HTTP o resultado del escenario. |
+| `2` | Configuración inválida: no se inicia ningún envío. |
+
+El resumen cuenta creaciones cuya respuesta tiene la estructura válida del
+contrato. Si hay timeout o la respuesta es incomprensible, la API puede haber
+creado la orden aunque no pueda confirmarse localmente. No se repite ese POST:
+se continúa con el siguiente escenario, sin seguir redirecciones ni ejecutar
+reintentos manuales de despacho. Los errores de programación se propagan.
+
+Se usan conexión directa sin proxy de entorno, verificación TLS para HTTPS y
+timeouts de conexión de 2 s, lectura de 20 s y escritura de 5 s, con cero
+reintentos automáticos. La lectura permite esperar el despacho síncrono de la
+API, pero no constituye un timeout global.
+
+Las pruebas del simulador usan transporte sustituido, sin Rails ni servidores:
+
+```sh
+~/.local/bin/mise exec -- bundle exec ruby -Itest test/lib/order_simulator_test.rb
+```

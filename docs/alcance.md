@@ -150,6 +150,29 @@ dos solicitudes pueden superar la comprobación y enviar HTTP. La detección de
 duplicados del receptor evita una segunda aceptación mientras conserve su
 memoria, pero reiniciarlo elimina esa protección.
 
+### Simulación de órdenes
+
+El cliente independiente `script/simulate_orders.rb` usa Net::HTTP y JSON, sin
+cargar Rails ni consultar PostgreSQL. Envía únicamente `POST /api/v1/orders`;
+no consulta ni ejecuta reintentos de despacho.
+
+- `API_BASE_URL` vale `http://localhost:3000` por defecto. Debe ser una URL HTTP/HTTPS con host y puerto válido, sin credenciales, query ni fragmento; admite un prefijo de ruta antes de `/api/v1/orders`.
+- `ORDER_COUNT` es un entero positivo y vale 6 por defecto: cubre los tres restaurantes del catálogo y ambos tipos. Cantidades mayores repiten esos cruces.
+- `RANDOM_SEED` es un entero opcional. La semilla usada se imprime y permite reproducir los payloads, no los IDs ni los resultados del servidor.
+- Se usan IDs y precios del dataset de referencia, ítems distintos con cantidades variables y solo clientes y direcciones ficticios. Se alterna `client_total_amount` omitido y coincidente.
+- Los precios locales solo construyen el monto declarado de la simulación; la API calcula el total real. Los casos coincidentes y las referencias válidas presuponen los seeds sin cambios.
+- Después se ejecutan cantidad cero (`items[0].quantity`/`greater_than`), producto inexistente (`items[0].product_id`/`blank`), producto repetido (`items`/`invalid`, mensaje `must not contain duplicate products`), delivery sin dirección (`delivery_address`/`blank`) y monto diferente (`client_total_amount`/`total_mismatch`).
+- Un 422 solo comprueba un escenario inválido si la respuesta tiene errores con `field`, `code` y `message` válidos y contiene el error concreto esperado. Una aceptación o rechazo por otro motivo es inesperado.
+- Un 201 válido con `sent` o `error` cuenta como creación, no como rechazo. Los fallos de despacho se cuentan por separado y permanecen visibles. Una respuesta 201 con `pending` se informa como inesperada.
+- Se envía un POST por escenario, sin seguir redirecciones ni repetirlo ante un resultado ambiguo. Los timeouts son 2 s de conexión, 20 s de lectura y 5 s de escritura, con `max_retries: 0` y verificación de certificados HTTPS.
+- Salida 0 si todos los escenarios cumplen su expectativa de creación o rechazo; salida 1 ante transporte, JSON, estructura o resultados inesperados; salida 2 ante configuración inválida, antes de enviar. Los errores de programación se propagan.
+
+El resumen distingue creaciones confirmadas, estados de despacho, rechazos
+esperados y fallos inesperados. Un timeout o una respuesta incomprensible puede
+ocultar una creación ya realizada: no se repite el POST automáticamente.
+Ejecutarlo contra una API real crea órdenes; repetirlo, incluso con la misma
+semilla, crea órdenes nuevas. No borra registros ni reinicia bases.
+
 ## Integración
 
 - Despacho síncrono a `dispatch_url`.
