@@ -1,0 +1,9 @@
+one:
+  name: Test Product One
+  sku: TEST-PRODUCT-ONE
+  price: 4990
+
+two:
+  name: Test Product Two
+  sku: TEST-PRODUCT-TWO
+  price: 0

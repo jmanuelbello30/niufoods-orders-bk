@@ -1,0 +1,9 @@
+one:
+  name: Test Restaurant One
+  code: TEST-ONE
+  dispatch_url: http://localhost:4567/orders
+
+two:
+  name: Test Restaurant Two
+  code: TEST-TWO
+  dispatch_url: https://store.example.com/orders
