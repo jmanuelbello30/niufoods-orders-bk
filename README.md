@@ -320,3 +320,101 @@ base de datos durante el envío. La comprobación previa del estado **no garanti
 exclusión entre solicitudes simultáneas**: pueden salir varios POST para una
 misma orden. No hay coordinación adicional ni una garantía de entrega exactamente
 una vez entre procesos o reinicios del receptor.
+
+## Consultas de órdenes
+
+Las consultas son de solo lectura y no necesitan que el receptor esté iniciado.
+No crean ni actualizan registros ni envían HTTP a las tiendas.
+
+### Listado
+
+```sh
+curl -i http://localhost:3000/api/v1/orders \
+  -H 'Accept: application/json'
+```
+
+Responde HTTP 200. Ejemplo ilustrativo con una orden:
+
+```json
+{
+  "data": [
+    {
+      "id": 9001,
+      "restaurant_id": 1,
+      "restaurant": { "id": 1, "name": "Niu Foods Providencia", "code": "PROV" },
+      "total_amount": 17980,
+      "order_type": "pickup",
+      "created_at": "2026-10-22T12:00:00.000Z",
+      "dispatch_status": "pending"
+    }
+  ]
+}
+```
+
+Sin órdenes devuelve `{"data":[]}`. El orden es `created_at` descendente y
+después `id` descendente para resolver empates. No hay filtros ni paginación:
+se devuelven todas las órdenes. El listado no incluye cliente, dirección ni
+ítems; tampoco expone la URL de despacho.
+
+### Detalle
+
+El identificador 9001 es ilustrativo; debe corresponder a una orden existente:
+
+```sh
+curl -i http://localhost:3000/api/v1/orders/9001 \
+  -H 'Accept: application/json'
+```
+
+Responde HTTP 200 con los campos del listado y los datos adicionales del pedido:
+
+```json
+{
+  "data": {
+    "id": 9001,
+    "restaurant_id": 1,
+    "restaurant": { "id": 1, "name": "Niu Foods Providencia", "code": "PROV" },
+    "total_amount": 17980,
+    "order_type": "pickup",
+    "created_at": "2026-10-22T12:00:00.000Z",
+    "dispatch_status": "pending",
+    "client_total_amount": null,
+    "customer": { "name": "Test Customer", "phone": "+56000000000" },
+    "delivery_address": null,
+    "dispatched_at": null,
+    "last_dispatch_error": null,
+    "items": [
+      {
+        "id": 7001,
+        "product_id": 1,
+        "product_name": "Niu Roll Salmón",
+        "sku": "SKU-001",
+        "quantity": 2,
+        "unit_price": 8990,
+        "subtotal": 17980
+      }
+    ]
+  }
+}
+```
+
+Los ítems se ordenan por ID ascendente. `product_name` y `sku` reflejan el
+catálogo actual; pueden cambiar si se actualiza el producto. En cambio,
+`unit_price` conserva el precio al momento de la compra y `subtotal` es
+`quantity * unit_price` histórico. La consulta devuelve `total_amount` guardado,
+sin recalcularlo ni sustituir precios por los actuales del catálogo.
+
+Todos los importes son números enteros CLP. Los enums son strings (`pickup`,
+`delivery`, `pending`, `sent`, `error`), las fechas usan ISO 8601 con milisegundos
+y zona horaria, y los valores opcionales ausentes son `null`. Angular realizará
+la presentación local de fechas e importes.
+
+Para una orden inexistente responde HTTP 404 con el mismo contrato que el reintento:
+
+```json
+{"errors":[{"field":"id","code":"not_found","message":"Order not found"}]}
+```
+
+El listado precarga solo restaurantes; no consulta ítems ni productos. El detalle
+precarga restaurante, ítems y productos para evitar consultas adicionales por
+cada registro. Estas representaciones no cambian las respuestas de creación ni
+de reintento.

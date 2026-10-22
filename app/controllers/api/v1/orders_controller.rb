@@ -5,6 +5,21 @@ module Api
 
       rescue_from ActionDispatch::Http::Parameters::ParseError, with: :render_invalid_json
 
+      def index
+        orders = Order.preload(:restaurant).order(created_at: :desc, id: :desc)
+        render json: { data: orders.map { |order| OrderSerializer.new(order).summary } }, status: :ok
+      end
+
+      def show
+        order = Order.preload(:restaurant, order_items: :product).find_by(id: request.path_parameters[:id])
+        unless order
+          return render json: { errors: [ { field: "id", code: "not_found", message: "Order not found" } ] },
+            status: :not_found
+        end
+
+        render json: { data: OrderSerializer.new(order).detail }, status: :ok
+      end
+
       def create
         request.request_parameters
         return render_invalid_json if request.raw_post.empty?

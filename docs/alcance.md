@@ -116,6 +116,20 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Los atributos enviados por el cliente no pueden establecer valores internos como `unit_price`, `total_amount` ni `dispatch_status`.
 - Queda pendiente decidir si los atributos no permitidos se ignoran o se rechazan.
 
+### Consultas de órdenes
+
+- `GET /api/v1/orders` responde HTTP 200 con `{ "data": [...] }`; si no hay órdenes, devuelve `{ "data": [] }`.
+- El listado incluye `id`, `restaurant_id`, `restaurant` con `id`, `name` y `code`, `total_amount`, `order_type`, `created_at` y `dispatch_status`.
+- Se ordena por `created_at` descendente y, en caso de empate, por `id` descendente. No hay filtros ni paginación en este incremento.
+- El listado no incluye cliente, dirección, ítems ni otros datos privados del detalle.
+- `GET /api/v1/orders/:id` responde HTTP 200 con `{ "data": {...} }`.
+- El detalle incluye los campos del listado más `client_total_amount`, `customer` con `name` y `phone`, `delivery_address`, `dispatched_at`, `last_dispatch_error` e `items`.
+- Cada ítem contiene `id`, `product_id`, `product_name`, `sku`, `quantity`, `unit_price` y `subtotal`; se ordenan por `id` ascendente.
+- `product_name` y `sku` proceden del catálogo actual. `unit_price` es el precio histórico persistido al crear la orden; `subtotal` se obtiene como `quantity * unit_price` sin modificar ni recalcular `total_amount`.
+- Los importes son números enteros CLP, los enums se devuelven por nombre y las fechas son strings ISO 8601 con milisegundos y zona horaria. La presentación local corresponde a Angular. Los campos opcionales sin valor se devuelven como `null`.
+- Una orden inexistente responde HTTP 404 con `errors: [{ field: "id", code: "not_found", message: "Order not found" }]`.
+- Ninguna consulta expone `dispatch_url`, modifica datos ni inicia despachos. Los contratos de creación y reintento se mantienen sin cambios.
+
 ### Reintento manual del despacho
 
 - `POST /api/v1/orders/:id/retry_dispatch` no requiere payload; cualquier body se ignora y el identificador se toma exclusivamente de la ruta.
