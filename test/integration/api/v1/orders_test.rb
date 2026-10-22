@@ -1,12 +1,33 @@
 require "test_helper"
+require_relative "../../../support/http_transport_helper"
 
 class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
+  include HttpTransportHelper
+
+  # Dispatch must follow a real commit, not a savepoint inside the test transaction.
+  self.use_transactional_tests = false
+
   setup do
+    @created_order_ids = []
+    @http_requests = []
+    @transport = ->(http, request) do
+      @http_requests << [ http, request ]
+      body = JSON.parse(request.body)
+      http_response(200, JSON.generate(data: {
+        accepted: true, order_id: body.fetch("order_id"),
+        restaurant_id: body.fetch("restaurant_id"), duplicate: false
+      }))
+    end
     @payload = {
       restaurant_id: restaurants(:one).id, order_type: "pickup",
       customer: { name: "Test Customer", phone: "+56000000000" },
       items: [ { product_id: products(:one).id, quantity: 1 } ]
     }
+  end
+
+  teardown do
+    OrderItem.where(order_id: @created_order_ids).delete_all
+    Order.where(id: @created_order_ids).delete_all
   end
 
   test "creates a pickup with catalog totals and explicit persisted relationships" do
@@ -146,7 +167,64 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
     assert_equal "Test Customer", order.customer_name
     assert_equal "+56000000000", order.customer_phone
     assert_nil order.last_dispatch_error
+    assert_predicate order.dispatched_at, :present?
+    assert_not_equal Time.iso8601(@payload[:dispatched_at]), order.dispatched_at
+  end
+
+  test "dispatches only after the order and items are committed and visible to another connection" do
+    @payload[:items] << { product_id: products(:two).id, quantity: 2 }
+    transport = @transport
+    @transport = ->(http, request) do
+      assert_not Order.connection.transaction_open?
+      body = JSON.parse(request.body)
+      pool = Order.connection_pool
+      connection = pool.checkout
+      begin
+        assert_not_same Order.connection, connection
+        order_id = connection.quote(Integer(body.fetch("order_id")))
+        rows = connection.select_all("SELECT * FROM orders WHERE id = #{order_id}").to_a
+        assert_equal 1, rows.size
+        row = rows.sole
+        assert_equal body.fetch("restaurant_id"), row.fetch("restaurant_id")
+        assert_equal Order.order_types.fetch(body.fetch("order_type")), row.fetch("order_type")
+        assert_equal body.fetch("customer").fetch("name"), row.fetch("customer_name")
+        assert_equal body.fetch("customer").fetch("phone"), row.fetch("customer_phone")
+        assert_nil row.fetch("delivery_address")
+        assert_equal body.fetch("total_amount"), row.fetch("total_amount")
+        assert_equal Order.dispatch_statuses.fetch("pending"), row.fetch("dispatch_status")
+        items = connection.select_all(
+          "SELECT product_id, quantity, unit_price FROM order_items WHERE order_id = #{order_id} ORDER BY id"
+        ).to_a
+        assert_equal 2, items.size
+        assert_equal body.fetch("items"), items
+      ensure
+        pool.checkin(connection)
+      end
+      transport.call(http, request)
+    end
+
+    post_order
+
+    assert_equal 1, @http_requests.size
+  end
+
+  test "keeps the created order and items and returns the same data fields when dispatch receives HTTP 503" do
+    @transport = ->(http, request) do
+      @http_requests << [ http, request ]
+      http_response(503, JSON.generate(errors: [ { message: "Private store failure details" } ]))
+    end
+
+    order = post_order(dispatch_status: "error")
+
+    assert_equal 1, @http_requests.size
+    assert_equal "error", response.parsed_body.dig("data", "dispatch_status")
     assert_nil order.dispatched_at
+    assert_equal "Store returned HTTP 503", order.last_dispatch_error
+    assert_equal restaurants(:one).id, order.restaurant_id
+    assert_equal 4990, order.total_amount
+    item = order.order_items.sole
+    assert_equal [ order.id, products(:one).id, 1, 4990 ],
+      [ item.order_id, item.product_id, item.quantity, item.unit_price ]
   end
 
   test "rejects non object customers and non array item collections" do
@@ -229,11 +307,16 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
 
   private
     def post_json(payload, raw: false)
-      post "/api/v1/orders", params: raw ? payload.dup : ActiveSupport::JSON.encode(payload),
-        headers: { "CONTENT_TYPE" => "application/json", "ACCEPT" => "application/json" }
+      previous_ids = Order.ids
+      with_http_transport(@transport) do
+        post "/api/v1/orders", params: raw ? payload.dup : ActiveSupport::JSON.encode(payload),
+          headers: { "CONTENT_TYPE" => "application/json", "ACCEPT" => "application/json" }
+      end
+    ensure
+      @created_order_ids.concat(Order.where.not(id: previous_ids).ids) if previous_ids
     end
 
-    def post_order(payload = @payload)
+    def post_order(payload = @payload, dispatch_status: "sent")
       assert_difference -> { Order.count }, 1 do
         assert_difference -> { OrderItem.count }, payload.fetch(:items).size do
           post_json(payload)
@@ -246,14 +329,20 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
       assert_equal %w[client_total_amount created_at dispatch_status id order_type restaurant_id total_amount], data.keys.sort
       order = Order.find(data.fetch("id"))
       assert_equal order.as_json(only: data.keys), data
-      assert_equal "pending", data.fetch("dispatch_status")
+      assert_equal dispatch_status, data.fetch("dispatch_status")
       assert_kind_of String, data.fetch("created_at")
-      assert order.pending?
+      if dispatch_status == "sent"
+        assert_predicate order, :sent?
+        assert_predicate order.dispatched_at, :present?
+        assert_nil order.last_dispatch_error
+      else
+        assert_predicate order, :error?
+      end
       order
     end
 
     def reject_order(payload, field, code: nil, status: :unprocessable_content, raw: false)
-      assert_no_difference [ -> { Order.count }, -> { OrderItem.count } ] do
+      assert_no_difference [ -> { Order.count }, -> { OrderItem.count }, -> { @http_requests.size } ] do
         post_json(payload, raw: raw)
       end
       assert_response status

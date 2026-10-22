@@ -126,7 +126,37 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Receptor reconoce `order_id` para evitar duplicados.
 - Órdenes `pending` o `error` pueden reintentarse; órdenes `sent` no.
 - La confirmación de recepción no implica preparación ni entrega.
-- Los timeouts siguen siendo valores iniciales propuestos: conexión 2 s, lectura 5 s.
+- Timeouts del emisor: conexión 2 s, lectura 5 s y escritura 5 s; sin reintentos automáticos ni seguimiento de redirecciones.
+
+El flujo del POST es guardar orden e ítems, confirmar la transacción, ejecutar
+`Orders::Dispatch`, registrar conjuntamente el resultado y responder HTTP 201
+con el estado persistido `sent` o `error`. `Orders::Create` conserva únicamente
+la responsabilidad de crear y persistir. Una orden rechazada no se despacha.
+
+`Orders::Dispatch` exige una orden persistida y realiza el envío fuera de
+transacciones de base de datos y callbacks. Recarga los datos persistidos y no
+reenvía una orden que ya esté en `sent`. El emisor usa HTTP o HTTPS con
+verificación de certificados y no recalcula precios históricos.
+
+Un resultado HTTP 2xx solo confirma el despacho si el cuerpo es JSON válido,
+`data.accepted` es el booleano `true` y `order_id` y `restaurant_id` son enteros
+exactamente iguales a los enviados. `duplicate: true` también confirma éxito.
+Un cuerpo vacío, JSON inválido o una confirmación incompleta o incompatible
+se registra como error, igual que un fallo de red, protocolo o timeout.
+
+Los mensajes de `last_dispatch_error` contienen solo el estado HTTP, el tipo
+de fallo de transporte o una descripción fija de confirmación inválida; no
+guardan cuerpos, URLs, datos de cliente ni mensajes originales de excepciones.
+Los errores inesperados y los fallos de base de datos al registrar el resultado
+se propagan, sin reclasificarlos como errores de transporte.
+
+El envío es síncrono y mantiene ocupada la solicitud HTTP. Los timeouts son por
+operación, no un límite global. No hay reintentos ni exclusión de llamadas de
+despacho concurrentes. Una tienda puede aceptar aunque se pierda la respuesta o
+falle el registro local del resultado. Un envío posterior del mismo `order_id`
+al mismo restaurante puede recuperar esa situación gracias a la confirmación
+de duplicado; el endpoint de reintento sigue pendiente y la memoria del receptor
+se pierde al reiniciar.
 
 ### Contrato del receptor simulado
 
@@ -135,7 +165,7 @@ en `/restaurants/PROV/orders`, `/restaurants/LCON/orders` y
 `/restaurants/NUNO/orders`. Los destinos corresponden respectivamente a
 `restaurant_id` 1, 2 y 3 del catálogo de referencia; no consulta la base de Rails.
 
-El futuro emisor enviará un objeto JSON directamente en la raíz:
+El emisor envía un objeto JSON directamente en la raíz:
 
 ```json
 {
@@ -172,8 +202,8 @@ La recepción y los reenvíos ya aceptados responden HTTP 200 con:
 }
 ```
 
-Un duplicado conserva esa confirmación y devuelve `duplicate: true`. El futuro
-emisor deberá comprobar HTTP 200, `accepted: true` y que ambos identificadores
+Un duplicado conserva esa confirmación y devuelve `duplicate: true`. El
+emisor comprueba un estado HTTP 2xx, `accepted: true` y que ambos identificadores
 coincidan con el despacho. La confirmación no implica preparación ni entrega.
 
 Los errores usan `errors` con `field`, `code` y `message`: HTTP 400 para JSON

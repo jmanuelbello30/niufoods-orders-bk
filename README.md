@@ -65,8 +65,12 @@ Responde HTTP 201 con `data`, que incluye `id`, `restaurant_id`, `order_type`,
 El total de este ejemplo es 22470 CLP. `client_total_amount` es opcional y se
 devuelve como `null` si no se informa o se envía `null`.
 
-La orden se crea en estado `pending`: este incremento no realiza despachos.
-El envío al receptor se implementará después.
+El flujo es guardar la orden y sus ítems, confirmar la transacción, despachar
+por HTTP, registrar el resultado y responder. Iniciar primero el receptor
+simulado con el comando descrito más abajo para obtener `dispatch_status: "sent"`.
+Si el receptor falla o su confirmación no es válida, la respuesta sigue siendo
+HTTP 201, pero con `dispatch_status: "error"`: la orden y sus ítems se conservan.
+Una orden rechazada con HTTP 422 no intenta el despacho.
 
 ### Diferencia de totales
 
@@ -159,7 +163,7 @@ Cambiar el puerto requiere ajustar el destino del emisor; los seeds usan 4567.
 
 ### Payload y confirmación
 
-El contrato completo para el futuro emisor está en
+El contrato completo del emisor está en
 [`docs/alcance.md`](docs/alcance.md#contrato-del-receptor-simulado). El receptor
 solo comprueba la estructura mínima y los identificadores; no recalcula precios
 ni totales y no comprueba la existencia de productos en Rails.
@@ -210,5 +214,44 @@ Las pruebas del receptor pueden ejecutarse sin Rails ni PostgreSQL:
 ~/.local/bin/mise exec -- bundle exec ruby -Itest test/lib/store_receiver_test.rb
 ```
 
-Este incremento no implementa el emisor HTTP ni cambia estados de órdenes de
-Rails. `POST /api/v1/orders` sigue creando órdenes en `pending` sin despacharlas.
+## Despacho HTTP síncrono
+
+`Orders::Create` solo crea y persiste la orden. El controlador llama después a
+`Orders::Dispatch`, fuera de esa transacción y sin callbacks de envío. Este
+servicio exige una orden persistida, rechaza envíos dentro de una transacción
+abierta y no vuelve a enviar órdenes que ya están en `sent`.
+
+El destino es `order.restaurant.dispatch_url`. El POST envía exclusivamente los
+datos recargados de la orden y sus ítems, con los precios históricos, sin leer
+precios actuales del catálogo. Usa `Content-Type` y `Accept` como
+`application/json`, conexión directa sin proxy de entorno y HTTP o HTTPS con
+verificación de certificados.
+
+| Configuración | Valor |
+| --- | --- |
+| Conexión (`open_timeout`) | 2 segundos |
+| Lectura (`read_timeout`) | 5 segundos |
+| Escritura (`write_timeout`) | 5 segundos |
+| Reintentos automáticos (`max_retries`) | 0 |
+| Redirecciones | No se siguen |
+
+Una respuesta 2xx debe contener JSON con `data.accepted: true` y los
+identificadores enteros `order_id` y `restaurant_id` exactamente iguales a los
+enviados. Las confirmaciones de duplicado también son exitosas. No basta con
+recibir HTTP 200 si la confirmación está vacía, incompleta o es incompatible.
+
+En éxito, se actualizan conjuntamente `dispatch_status: "sent"`,
+`dispatched_at` y `last_dispatch_error: null`. Ante un fallo esperado de
+transporte, timeout, HTTP o confirmación, se guardan `dispatch_status: "error"`,
+`dispatched_at: null` y un mensaje operacional breve. No se guardan cuerpos de
+respuesta, URLs, datos del cliente ni mensajes originales de excepciones.
+Los errores inesperados y los fallos de base de datos al guardar el resultado
+no se convierten en errores de transporte ni se ocultan.
+
+El cliente del POST espera mientras se despacha; los timeouts son por operación,
+no un límite global. No hay jobs ni reintentos automáticos o manuales mediante
+la API. Tampoco se coordinan llamadas de despacho simultáneas para una orden.
+La tienda puede haber aceptado aunque el emisor pierda la confirmación o falle
+al guardar el resultado. Un envío posterior con el mismo identificador puede
+confirmarse como duplicado, mientras el receptor conserve su memoria; reiniciar
+el receptor elimina esa protección. El endpoint de reintento queda pendiente.
