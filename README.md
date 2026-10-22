@@ -249,9 +249,74 @@ Los errores inesperados y los fallos de base de datos al guardar el resultado
 no se convierten en errores de transporte ni se ocultan.
 
 El cliente del POST espera mientras se despacha; los timeouts son por operación,
-no un límite global. No hay jobs ni reintentos automáticos o manuales mediante
-la API. Tampoco se coordinan llamadas de despacho simultáneas para una orden.
+no un límite global. No hay jobs ni reintentos automáticos. Tampoco se coordinan
+llamadas de despacho simultáneas para una orden.
 La tienda puede haber aceptado aunque el emisor pierda la confirmación o falle
 al guardar el resultado. Un envío posterior con el mismo identificador puede
 confirmarse como duplicado, mientras el receptor conserve su memoria; reiniciar
-el receptor elimina esa protección. El endpoint de reintento queda pendiente.
+el receptor elimina esa protección.
+
+## Reintento manual del despacho
+
+`POST /api/v1/orders/:id/retry_dispatch` reenvía una orden existente que esté en
+`pending` o `error`. No requiere payload; cualquier body se ignora, incluido un
+ID o destino alternativo. Solo se usan el identificador de la ruta y los datos
+persistidos. No crea otra orden ni ítems, no recalcula el total y no toma precios
+actuales del catálogo.
+
+Con Rails y el receptor local iniciados, reintentar una orden existente
+(el identificador 9001 es ilustrativo):
+
+```sh
+curl -i -X POST http://localhost:3000/api/v1/orders/9001/retry_dispatch \
+  -H 'Accept: application/json'
+```
+
+Un intento completado responde HTTP 200, incluso si el despacho vuelve a fallar.
+Ejemplo de éxito:
+
+```json
+{
+  "data": {
+    "id": 9001,
+    "restaurant_id": 1,
+    "order_type": "pickup",
+    "total_amount": 17980,
+    "client_total_amount": null,
+    "dispatch_status": "sent",
+    "created_at": "2026-10-22T12:00:00.000Z",
+    "dispatched_at": "2026-10-22T12:05:00.000Z",
+    "last_dispatch_error": null
+  }
+}
+```
+
+Ante un nuevo fallo esperado, la respuesta sigue siendo HTTP 200 con los mismos
+campos, `dispatch_status: "error"`, `dispatched_at: null` y el mensaje actualizado
+en `last_dispatch_error`, por ejemplo `"Store returned HTTP 503"`. El pedido y
+sus ítems se conservan. Un HTTP 200 de este endpoint significa que terminó el
+intento; el estado de `data` indica su resultado.
+
+Si no existe la orden, responde HTTP 404 sin intentar el envío:
+
+```json
+{"errors":[{"field":"id","code":"not_found","message":"Order not found"}]}
+```
+
+Si ya está `sent` al comprobar su estado, responde HTTP 409 sin enviar ni modificar:
+
+```json
+{"errors":[{"field":"dispatch_status","code":"already_sent","message":"Order has already been sent"}]}
+```
+
+Se reenvía el mismo `order_id` porque la tienda pudo haber aceptado el primer
+despacho aunque Rails perdiera la confirmación. Una confirmación con
+`duplicate: true` permite recuperar `sent`, registrar la fecha y limpiar el error.
+El receptor solo recuerda IDs en memoria; reiniciarlo elimina esa protección.
+
+El endpoint reutiliza `Orders::Dispatch`, mantiene sus timeouts y propaga fallos
+inesperados. No envía HTTP dentro de una transacción ni mantiene bloqueos de
+base de datos durante el envío. La comprobación previa del estado **no garantiza
+exclusión entre solicitudes simultáneas**: pueden salir varios POST para una
+misma orden. No hay coordinación adicional ni una garantía de entrega exactamente
+una vez entre procesos o reinicios del receptor.

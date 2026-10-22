@@ -116,6 +116,26 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Los atributos enviados por el cliente no pueden establecer valores internos como `unit_price`, `total_amount` ni `dispatch_status`.
 - Queda pendiente decidir si los atributos no permitidos se ignoran o se rechazan.
 
+### Reintento manual del despacho
+
+- `POST /api/v1/orders/:id/retry_dispatch` no requiere payload; cualquier body se ignora y el identificador se toma exclusivamente de la ruta.
+- Solo las órdenes `pending` o `error` son elegibles. Se reutiliza `Orders::Dispatch` con la orden persistida, sin crear órdenes o ítems ni cambiar datos del pedido.
+- HTTP 200 cuando termina un intento, tanto si el estado final es `sent` como `error`.
+- La respuesta conserva `data` y contiene `id`, `restaurant_id`, `order_type`, `total_amount`, `client_total_amount`, `dispatch_status`, `created_at`, `dispatched_at` y `last_dispatch_error`.
+- HTTP 404 si no existe la orden: `field: "id"`, `code: "not_found"`, `message: "Order not found"`.
+- HTTP 409 si ya está `sent` al comprobar su estado: `field: "dispatch_status"`, `code: "already_sent"`, `message: "Order has already been sent"`. No se envía HTTP ni se modifica la orden.
+- Los errores 404 y 409 mantienen la envoltura `errors` con `field`, `code` y `message`. Los fallos inesperados se propagan.
+
+El reintento conserva el mismo `order_id` y los montos y precios históricos.
+Esto permite confirmar una recepción previa cuya respuesta se perdió:
+`duplicate: true` también produce `sent`. No hay HTTP dentro de transacciones
+ni bloqueos de base de datos que abarquen la llamada de red.
+
+Comprobar el estado no garantiza exclusión entre solicitudes simultáneas:
+dos solicitudes pueden superar la comprobación y enviar HTTP. La detección de
+duplicados del receptor evita una segunda aceptación mientras conserve su
+memoria, pero reiniciarlo elimina esa protección.
+
 ## Integración
 
 - Despacho síncrono a `dispatch_url`.
@@ -151,11 +171,11 @@ Los errores inesperados y los fallos de base de datos al registrar el resultado
 se propagan, sin reclasificarlos como errores de transporte.
 
 El envío es síncrono y mantiene ocupada la solicitud HTTP. Los timeouts son por
-operación, no un límite global. No hay reintentos ni exclusión de llamadas de
+operación, no un límite global. No hay reintentos automáticos ni exclusión de llamadas de
 despacho concurrentes. Una tienda puede aceptar aunque se pierda la respuesta o
 falle el registro local del resultado. Un envío posterior del mismo `order_id`
 al mismo restaurante puede recuperar esa situación gracias a la confirmación
-de duplicado; el endpoint de reintento sigue pendiente y la memoria del receptor
+de duplicado mediante el endpoint de reintento manual; la memoria del receptor
 se pierde al reiniciar.
 
 ### Contrato del receptor simulado

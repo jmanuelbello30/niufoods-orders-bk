@@ -30,6 +30,24 @@ module Api
         end
       end
 
+      def retry_dispatch
+        order = Order.find_by(id: request.path_parameters[:id])
+        unless order
+          return render json: { errors: [ { field: "id", code: "not_found", message: "Order not found" } ] },
+            status: :not_found
+        end
+        if order.sent?
+          return render json: { errors: [ { field: "dispatch_status", code: "already_sent", message: "Order has already been sent" } ] },
+            status: :conflict
+        end
+
+        Orders::Dispatch.new(order).call
+        render json: { data: order.as_json(only: %i[
+          id restaurant_id order_type total_amount client_total_amount dispatch_status created_at
+          dispatched_at last_dispatch_error
+        ]) }, status: :ok
+      end
+
       private
         def structure_errors(input)
           unless input.is_a?(Hash)
