@@ -84,8 +84,11 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Al menos un ítem y cantidades enteras positivas.
 - Rechazar productos repetidos dentro de una orden.
 - Tomar precios del catálogo y conservarlos en `unit_price`.
-- Calcular `total_amount` como suma de `quantity * unit_price`.
-- `client_total_amount` es opcional y no sustituye nuestro cálculo.
+- Calcular siempre `total_amount` desde los precios del catálogo, como suma de `quantity * unit_price`.
+- `client_total_amount` es opcional y, si se informa, debe ser un entero no negativo en CLP; no sustituye nuestro cálculo.
+- Si no se informa `client_total_amount`, procesar la orden con el total calculado; si se informa, procesarla solo si coincide exactamente en pesos enteros CLP.
+- Si los totales difieren, responder HTTP 422 sin persistir la orden ni sus ítems y sin intentar el despacho.
+- Conservar `client_total_amount` en las órdenes aceptadas cuando fue informado. No almacenar intentos rechazados.
 - Guardar orden e ítems en una transacción.
 - Despachar después de confirmar esa transacción.
 - Un fallo de envío conserva la orden y registra estado `error`.
@@ -93,7 +96,7 @@ Unicidad compuesta de `order_id` y `product_id`.
 ## Requisitos y decisiones de diseño
 
 - El cálculo y la persistencia del total en el servidor son requisitos de la prueba.
-- Recibir y conservar `client_total_amount` es una decisión de diseño; el payload de referencia no incluye ese campo.
+- Recibir, comparar y conservar `client_total_amount` en órdenes aceptadas es una decisión de diseño de la solución; el payload de referencia no incluye ese campo. La política se detalla en «Política de comparación de totales».
 - Rechazar productos repetidos, exigir nombre y teléfono y ofrecer reintento manual son decisiones de esta solución, no exigencias explícitas de Niu Foods.
 
 ## API
@@ -106,6 +109,8 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Cada error contiene `field`, `code` y `message`.
 - HTTP 201 si se creó la orden, incluso si falló el despacho.
 - HTTP 422 por validación; HTTP 400 para JSON mal formado.
+- `client_total_amount` es opcional; si se informa, debe ser un entero no negativo. Si se omite o coincide exactamente con `total_amount` en pesos enteros CLP, la orden se procesa conforme a las demás validaciones.
+- Si `client_total_amount` difiere de `total_amount`, responder HTTP 422 sin persistir la orden ni sus ítems y sin intentar el despacho. El error bajo `errors` utiliza `field: "client_total_amount"`, `code: "total_mismatch"` y un `message` que indica el monto declarado y el calculado, ambos en CLP.
 - Referencias a restaurante o productos inexistentes en el POST invalidan la orden y generan HTTP 422.
 - Un fallo de validación no guarda registros parciales ni despacha.
 - Los atributos enviados por el cliente no pueden establecer valores internos como `unit_price`, `total_amount` ni `dispatch_status`.
@@ -156,8 +161,22 @@ en AGENTS.md.
 - Administración del catálogo.
 - Integraciones reales con plataformas de venta.
 
-## Pendiente de aclaración
+## Política de comparación de totales
 
-Definir el comportamiento cuando `client_total_amount` difiera de
-`total_amount`. Hasta resolverlo, no se implementará una política de
-aceptación, rechazo ni nuevos estados asociados a esa diferencia.
+Esta política es una decisión de diseño de la solución, no una exigencia
+explícita de Niu Foods.
+
+- `total_amount` siempre se calcula desde los precios del catálogo.
+- `client_total_amount` es opcional y debe ser un entero no negativo si se informa.
+- Si no se informa, la orden se procesa con el total calculado.
+- Si se informa y coincide exactamente con `total_amount`, la orden se procesa.
+- La comparación es exacta en pesos enteros CLP.
+- Si difiere, se responde HTTP 422 sin persistir la orden ni sus ítems y sin intentar el despacho.
+- El error utiliza `field: "client_total_amount"` y `code: "total_mismatch"`. El mensaje indica ambos montos, identificando el declarado y el calculado en CLP.
+- `client_total_amount` se conserva en las órdenes aceptadas cuando fue informado. No se almacenan intentos rechazados.
+
+La coincidencia de totales no exime del cumplimiento de las demás validaciones.
+
+Justificación: evitar procesar una compra por un importe distinto al declarado
+por el canal, manteniendo el catálogo como fuente del cálculo. El alcance
+actual no contempla descuentos ni cargos adicionales.
