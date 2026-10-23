@@ -116,6 +116,51 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Los atributos enviados por el cliente no pueden establecer valores internos como `unit_price`, `total_amount` ni `dispatch_status`.
 - Queda pendiente decidir si los atributos no permitidos se ignoran o se rechazan.
 
+### Autenticación
+
+La autenticación está implementada en el backend. Todos los endpoints de
+órdenes (creación, listado, detalle y reintento), `me` y `logout` requieren una
+sesión válida. El login y `/up` son públicos. El acceso de los usuarios
+autenticados es compartido, sin roles ni restricciones por restaurante.
+
+- `POST /api/v1/auth/login` recibe `email` y `password` en el cuerpo JSON directamente en la raíz, no en query. Responde HTTP 200 con `data.access_token`, `data.token_type: "Bearer"`, `data.expires_at` en ISO 8601 con milisegundos y zona horaria (`iso8601(3)`) y `data.user` con solo `id` y `email`.
+- `GET /api/v1/auth/me` responde HTTP 200 con `data` que contiene solo `id` y `email` del usuario autenticado.
+- `DELETE /api/v1/auth/logout` revoca inmediatamente solo la sesión presentada y responde HTTP 204 sin cuerpo; las demás sesiones siguen siendo válidas.
+- Cada login crea una sesión independiente, con expiración absoluta de 8 horas, sin extensión por uso. Solo se persiste el digest SHA-256 del token, no su valor original.
+- El token se acepta exclusivamente en `Authorization: Bearer <token>`, nunca en query, cuerpo ni cookies. Fuera del entorno local, HTTPS es obligatorio para proteger credenciales y tokens.
+- Las respuestas de autenticación y órdenes incluyen `Cache-Control: no-store`.
+
+Los errores de autenticación usan `errors`, con `field: "base"` en todos los casos:
+
+| HTTP | `code` | `message` | Condición |
+| --- | --- | --- | --- |
+| 401 | `invalid_credentials` | `Invalid email or password` | Credenciales inválidas en login. |
+| 401 | `unauthenticated` | `Valid Bearer token required` | Token ausente, inválido, expirado o revocado; incluye `WWW-Authenticate: Bearer`. |
+| 429 | `rate_limit_exceeded` | `Too many login attempts` | Se supera el límite de 10 intentos de login por minuto e IP; cuentan también los exitosos. |
+| 400 | `invalid_json` | `Malformed JSON body` | Cuerpo JSON malformado en login. |
+
+El límite usa el mecanismo nativo de Rails y el almacén de caché actual:
+`MemoryStore` por proceso en desarrollo y producción. No es un límite
+coordinado entre procesos y se pierde al reiniciar. En test se configura
+`NullStore`; las pruebas del límite sustituyen el almacén por memoria. No se
+agrega infraestructura nueva.
+
+El usuario de demostración se provisiona explícitamente con
+`bin/rails demo_user:provision`, indicando `DEMO_USER_EMAIL` y
+`DEMO_USER_PASSWORD`. Ambas variables son obligatorias y no tienen valores
+predeterminados; la contraseña requiere al menos 12 caracteres. El correo se
+normaliza quitando espacios extremos y pasando a minúsculas. Si el usuario
+ya existe, la tarea falla sin sobrescribir sus credenciales. No se crea desde
+los seeds. Ejemplo ficticio para desarrollo, tras verificar la conexión:
+
+```sh
+RAILS_ENV=development DEMO_USER_EMAIL=demo@example.test \
+  DEMO_USER_PASSWORD='Fictional-password-123' bin/rails demo_user:provision
+```
+
+La integración del login en Angular corresponde al próximo incremento y aún
+no está implementada. Swagger tampoco está implementado en este incremento.
+
 ### Consultas de órdenes
 
 - `GET /api/v1/orders` responde HTTP 200 con `{ "data": [...] }`; si no hay órdenes, devuelve `{ "data": [] }`.
@@ -157,6 +202,7 @@ cargar Rails ni consultar PostgreSQL. Envía únicamente `POST /api/v1/orders`;
 no consulta ni ejecuta reintentos de despacho.
 
 - `API_BASE_URL` vale `http://localhost:3000` por defecto. Debe ser una URL HTTP/HTTPS con host y puerto válido, sin credenciales, query ni fragmento; admite un prefijo de ruta antes de `/api/v1/orders`.
+- `API_TOKEN` es obligatorio, no vacío y sin valor predeterminado. Se obtiene por login y se exporta manualmente antes de ejecutar el simulador; se envía solo en `Authorization: Bearer <token>`. El simulador no imprime el token ni hace login automático. Fuera del entorno local debe usarse HTTPS.
 - `ORDER_COUNT` es un entero positivo y vale 6 por defecto: cubre los tres restaurantes del catálogo y ambos tipos. Cantidades mayores repiten esos cruces.
 - `RANDOM_SEED` es un entero opcional. La semilla usada se imprime y permite reproducir los payloads, no los IDs ni los resultados del servidor.
 - Se usan IDs y precios del dataset de referencia, ítems distintos con cantidades variables y solo clientes y direcciones ficticios. Se alterna `client_total_amount` omitido y coincidente.
@@ -166,6 +212,7 @@ no consulta ni ejecuta reintentos de despacho.
 - Un 201 válido con `sent` o `error` cuenta como creación, no como rechazo. Los fallos de despacho se cuentan por separado y permanecen visibles. Una respuesta 201 con `pending` se informa como inesperada.
 - Se envía un POST por escenario, sin seguir redirecciones ni repetirlo ante un resultado ambiguo. Los timeouts son 2 s de conexión, 20 s de lectura y 5 s de escritura, con `max_retries: 0` y verificación de certificados HTTPS.
 - Salida 0 si todos los escenarios cumplen su expectativa de creación o rechazo; salida 1 ante transporte, JSON, estructura o resultados inesperados; salida 2 ante configuración inválida, antes de enviar. Los errores de programación se propagan.
+- Ante HTTP 401 o 403, aborta inmediatamente los escenarios restantes y termina con salida 1. Si falta `API_TOKEN` o está vacío, termina con salida 2 sin enviar solicitudes.
 
 El resumen distingue creaciones confirmadas, estados de despacho, rechazos
 esperados y fallos inesperados. Un timeout o una respuesta incomprensible puede
@@ -302,7 +349,6 @@ en AGENTS.md.
 
 ## Fuera de alcance
 
-- Autenticación.
 - Pagos.
 - Seguimiento de repartidores.
 - Administración del catálogo.

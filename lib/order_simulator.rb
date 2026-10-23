@@ -8,7 +8,11 @@ class OrderSimulator
 
   attr_reader :summary
 
-  def initialize(api_base_url: "http://localhost:3000", count: 6, seed: nil, output: $stdout)
+  def initialize(api_token: nil, api_base_url: "http://localhost:3000", count: 6, seed: nil, output: $stdout)
+    unless api_token.is_a?(String) && !api_token.strip.empty?
+      raise ArgumentError, "API_TOKEN is required; set it to the access_token obtained from POST /api/v1/auth/login"
+    end
+    @api_token = api_token
     unless count.to_s.match?(/\A\d+\z/) && count.to_i.positive?
       raise ArgumentError, "ORDER_COUNT must be a positive integer"
     end
@@ -61,7 +65,9 @@ class OrderSimulator
   def run
     @summary = { created: 0, sent: 0, error: 0, pending: 0, expected_rejections: 0, unexpected_failures: 0 }
     @output.puts("seed=#{@seed} valid_orders=#{@count}")
-    scenarios.each { |scenario| run_scenario(scenario) }
+    scenarios.each do |scenario|
+      break if run_scenario(scenario) == :authentication_failure
+    end
     @output.puts("Summary #{@summary.map { |key, value| "#{key}=#{value}" }.join(" ")}")
     @summary[:unexpected_failures].zero? ? 0 : 1
   end
@@ -78,6 +84,7 @@ class OrderSimulator
       request = Net::HTTP::Post.new(@uri.request_uri)
       request["Content-Type"] = "application/json"
       request["Accept"] = "application/json"
+      request["Authorization"] = "Bearer #{@api_token}"
       request.body = JSON.generate(payload)
       http.request(request)
     end
@@ -95,6 +102,12 @@ class OrderSimulator
       end
 
       status = response.code.to_i
+      if [ 401, 403 ].include?(status)
+        @summary[:unexpected_failures] += 1
+        print_result(scenario, status, nil, "authentication_failure")
+        @output.puts("Authentication failed: check API_TOKEN and permissions.")
+        return :authentication_failure
+      end
       begin
         body = JSON.parse(response.body.to_s)
       rescue JSON::ParserError

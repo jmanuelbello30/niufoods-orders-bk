@@ -36,9 +36,105 @@ que las siguientes inserciones automáticas no colisionen.
 El receptor local descrito más abajo acepta HTTP POST en esas tres rutas.
 Ejecutar los seeds no envía solicitudes.
 
+## Autenticación
+
+Con las migraciones aplicadas y tras verificar la conexión de desarrollo como
+en «Catálogo de referencia», provisionar explícitamente un usuario de demostración:
+
+```sh
+RAILS_ENV=development DEMO_USER_EMAIL=demo@example.test \
+  DEMO_USER_PASSWORD='Fictional-password-123' bin/rails demo_user:provision
+```
+
+La contraseña del ejemplo es ficticia. `DEMO_USER_EMAIL` y `DEMO_USER_PASSWORD`
+son obligatorios, sin valores predeterminados; la contraseña requiere al menos
+12 caracteres. El correo se normaliza quitando espacios extremos y pasando a
+minúsculas. Si el usuario ya existe, la tarea falla sin sobrescribir sus
+credenciales. Los seeds del catálogo no provisionan usuarios.
+Si Ruby no está en `PATH`, anteponer `~/.local/bin/mise exec --` a `bin/rails`.
+
+Con Rails iniciado, obtener una sesión con credenciales en el cuerpo JSON,
+directamente en la raíz, no en la URL:
+
+```sh
+curl -i http://localhost:3000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  --data '{"email":"demo@example.test","password":"Fictional-password-123"}'
+```
+
+`POST /api/v1/auth/login` responde HTTP 200 con este contrato ilustrativo.
+El marcador de token **no es un token válido**:
+
+```json
+{
+  "data": {
+    "access_token": "<TOKEN_DEVUELTO_POR_LOGIN>",
+    "token_type": "Bearer",
+    "expires_at": "2026-10-23T20:00:00.000Z",
+    "user": { "id": 1, "email": "demo@example.test" }
+  }
+}
+```
+
+`expires_at` usa ISO 8601 con tres decimales y zona horaria (`iso8601(3)`).
+Cada login crea una sesión independiente con expiración absoluta de 8 horas,
+sin renovarse por uso. Se persiste solo el digest SHA-256 del token, nunca su
+valor original. Para los siguientes ejemplos, asignar manualmente el
+`data.access_token` recibido a `API_TOKEN`; el marcador siguiente debe reemplazarse
+y no permite autenticarse:
+
+```sh
+export API_TOKEN='<TOKEN_DEVUELTO_POR_LOGIN>'
+curl -i http://localhost:3000/api/v1/auth/me \
+  -H "Authorization: Bearer $API_TOKEN"
+```
+
+`GET /api/v1/auth/me` responde HTTP 200 con
+`{"data":{"id":1,"email":"demo@example.test"}}`. Para cerrar únicamente la
+sesión presentada, sin afectar otras sesiones del mismo usuario:
+
+```sh
+curl -i -X DELETE http://localhost:3000/api/v1/auth/logout \
+  -H "Authorization: Bearer $API_TOKEN"
+unset API_TOKEN
+```
+
+`DELETE /api/v1/auth/logout` responde HTTP 204 sin cuerpo y revoca la sesión
+inmediatamente. Volver a iniciar sesión y exportar el nuevo token antes de usar
+los ejemplos de órdenes o el simulador.
+
+Todos los endpoints de órdenes, `me` y `logout` requieren
+`Authorization: Bearer <token>`. No se aceptan tokens en query, cuerpo ni
+cookies. El login y `/up` son públicos. Las respuestas de autenticación y
+órdenes incluyen `Cache-Control: no-store`. Fuera del entorno local es
+obligatorio usar HTTPS; nunca enviar credenciales ni tokens por HTTP remoto.
+El acceso a las órdenes es compartido entre usuarios autenticados, sin roles
+ni restricciones por restaurante.
+
+Los errores usan exactamente `{"errors":[{"field":"base","code":"...","message":"..."}]}`:
+
+| HTTP | `code` | `message` | Condición |
+| --- | --- | --- | --- |
+| 401 | `invalid_credentials` | `Invalid email or password` | Credenciales de login inválidas. |
+| 401 | `unauthenticated` | `Valid Bearer token required` | Token ausente, inválido, expirado o revocado; incluye `WWW-Authenticate: Bearer`. |
+| 429 | `rate_limit_exceeded` | `Too many login attempts` | Más de 10 intentos de login por minuto e IP, incluidos los exitosos. |
+| 400 | `invalid_json` | `Malformed JSON body` | Cuerpo JSON malformado en login. |
+
+El limitador es el nativo de Rails y usa el almacén de caché actual:
+`MemoryStore` por proceso en desarrollo y producción, sin coordinación entre
+procesos ni persistencia al reiniciar. Test usa `NullStore`; las pruebas del
+límite sustituyen el almacén por memoria para comprobarlo. No se agrega
+infraestructura nueva.
+
+Angular deberá integrar el login y enviar el encabezado Bearer en el próximo
+incremento; no se implementa frontend en este incremento. Swagger sigue sin
+implementar.
+
 ## Creación de órdenes
 
-Con el servidor iniciado (`bin/rails server`) y el catálogo cargado,
+Con el servidor iniciado (`bin/rails server`), el catálogo cargado y `API_TOKEN`
+exportado desde un login válido,
 `POST /api/v1/orders` recibe JSON directamente en la raíz, sin envoltura `order`.
 Los ejemplos usan datos ficticios y los IDs del catálogo de referencia.
 
@@ -46,6 +142,7 @@ Los ejemplos usan datos ficticios y los IDs del catálogo de referencia.
 
 ```sh
 curl -i http://localhost:3000/api/v1/orders \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json' \
   --data '{
@@ -76,6 +173,7 @@ Una orden rechazada con HTTP 422 no intenta el despacho.
 
 ```sh
 curl -i http://localhost:3000/api/v1/orders \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json' \
   --data '{
@@ -269,6 +367,7 @@ Con Rails y el receptor local iniciados, reintentar una orden existente
 
 ```sh
 curl -i -X POST http://localhost:3000/api/v1/orders/9001/retry_dispatch \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H 'Accept: application/json'
 ```
 
@@ -330,6 +429,7 @@ No crean ni actualizan registros ni envían HTTP a las tiendas.
 
 ```sh
 curl -i http://localhost:3000/api/v1/orders \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H 'Accept: application/json'
 ```
 
@@ -362,6 +462,7 @@ El identificador 9001 es ilustrativo; debe corresponder a una orden existente:
 
 ```sh
 curl -i http://localhost:3000/api/v1/orders/9001 \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H 'Accept: application/json'
 ```
 
@@ -445,9 +546,12 @@ En la segunda, iniciar el receptor local; detenerlo con `Ctrl+C` al terminar:
 ~/.local/bin/mise exec -- bundle exec ruby script/store_receiver.rb
 ```
 
-En la tercera, ejecutar el simulador:
+En la tercera, obtener manualmente un token con el comando de login de
+«Autenticación» y exportar su `data.access_token`. No usar un token de ejemplo:
+el marcador siguiente no es válido. Luego ejecutar el simulador:
 
 ```sh
+export API_TOKEN='<TOKEN_DEVUELTO_POR_LOGIN>'
 ~/.local/bin/mise exec -- ruby script/simulate_orders.rb
 ```
 
@@ -465,6 +569,7 @@ con `Ctrl+C` en sus respectivas terminales. No es necesario borrar órdenes.
 
 | Variable | Predeterminado | Validación |
 | --- | --- | --- |
+| `API_TOKEN` | Sin valor predeterminado | Obligatorio y no vacío; token obtenido manualmente por login. Se envía solo en `Authorization: Bearer <token>`, no se imprime ni se obtiene mediante login automático. |
 | `API_BASE_URL` | `http://localhost:3000` | HTTP/HTTPS con host y puerto entre 1 y 65535, sin credenciales, query ni fragmento. Un prefijo como `/prefix` produce `/prefix/api/v1/orders`. |
 | `ORDER_COUNT` | `6` | Entero positivo: número de escenarios válidos. |
 | `RANDOM_SEED` | Aleatoria, impresa en consola | Entero opcional para reproducir payloads. |
@@ -516,13 +621,13 @@ como creaciones, pero aumentan `unexpected_failures`.
 | Código de salida | Significado |
 | --- | --- |
 | `0` | Todos los escenarios cumplen la expectativa de creación o rechazo. Puede haber creaciones con despacho `error`; revisar el resumen. |
-| `1` | Fallos inesperados de transporte, respuesta JSON, estructura, HTTP o resultado del escenario. |
-| `2` | Configuración inválida: no se inicia ningún envío. |
+| `1` | Fallos inesperados de transporte, respuesta JSON, estructura, HTTP o resultado del escenario. HTTP 401/403 aborta inmediatamente los escenarios restantes por fallo de autenticación. |
+| `2` | Configuración inválida, incluido `API_TOKEN` ausente o vacío: no se inicia ningún envío. |
 
 El resumen cuenta creaciones cuya respuesta tiene la estructura válida del
 contrato. Si hay timeout o la respuesta es incomprensible, la API puede haber
 creado la orden aunque no pueda confirmarse localmente. No se repite ese POST:
-se continúa con el siguiente escenario, sin seguir redirecciones ni ejecutar
+se continúa con el siguiente escenario salvo ante HTTP 401/403, sin seguir redirecciones ni ejecutar
 reintentos manuales de despacho. Los errores de programación se propagan.
 
 Se usan conexión directa sin proxy de entorno, verificación TLS para HTTPS y

@@ -10,9 +10,20 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_22_000004) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_23_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "api_sessions", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "token_digest", limit: 64, null: false
+    t.datetime "expires_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["expires_at"], name: "index_api_sessions_on_expires_at"
+    t.index ["token_digest"], name: "index_api_sessions_on_token_digest", unique: true
+    t.index ["user_id"], name: "index_api_sessions_on_user_id"
+  end
 
   create_table "order_items", force: :cascade do |t|
     t.bigint "order_id", null: false
@@ -66,6 +77,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_000004) do
     t.index ["code"], name: "index_restaurants_on_code", unique: true
   end
 
+  create_table "users", force: :cascade do |t|
+    t.string "email", null: false
+    t.string "password_digest", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["email"], name: "index_users_on_email", unique: true
+    t.check_constraint "email::text = lower(btrim(email::text)) AND email::text <> ''::text", name: "users_normalized_email"
+  end
+
+  add_foreign_key "api_sessions", "users"
   add_foreign_key "order_items", "orders"
   add_foreign_key "order_items", "products"
   add_foreign_key "orders", "restaurants"

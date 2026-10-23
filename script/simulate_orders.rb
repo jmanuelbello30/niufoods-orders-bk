@@ -2,6 +2,7 @@ require_relative "../lib/order_simulator"
 
 begin
   simulator = OrderSimulator.new(
+    api_token: ENV["API_TOKEN"],
     api_base_url: ENV.fetch("API_BASE_URL", "http://localhost:3000"),
     count: ENV.fetch("ORDER_COUNT", "6"),
     seed: ENV["RANDOM_SEED"]

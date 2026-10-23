@@ -1,8 +1,14 @@
 require "test_helper"
+require_relative "../../../support/api_authentication_helper"
 require_relative "../../../support/http_transport_helper"
 
 class Api::V1::OrderQueriesTest < ActionDispatch::IntegrationTest
+  include ApiAuthenticationHelper
   include HttpTransportHelper
+
+  setup do
+    @api_auth_headers = api_auth_headers
+  end
 
   test "returns an empty data array when there are no orders" do
     query_get
@@ -153,7 +159,7 @@ class Api::V1::OrderQueriesTest < ActionDispatch::IntegrationTest
 
     assert_equal 5, response.parsed_body.fetch("data").size
     [ small, large ].each do |statements|
-      selects = statements.grep(/\A\s*SELECT\b/i)
+      selects = domain_selects(statements)
       assert_equal 2, selects.size, selects.inspect
       assert selects.any? { |sql| sql.match?(/\bFROM\s+"?orders"?\b/i) }, selects.inspect
       assert selects.any? { |sql| sql.match?(/\bFROM\s+"?restaurants"?\b/i) }, selects.inspect
@@ -172,7 +178,7 @@ class Api::V1::OrderQueriesTest < ActionDispatch::IntegrationTest
     large = capture_sql { query_get(order.id) }
 
     assert_equal 5, response.parsed_body.fetch("data").fetch("items").size
-    counts = [ small, large ].map { |statements| statements.grep(/\A\s*SELECT\b/i).size }
+    counts = [ small, large ].map { |statements| domain_selects(statements).size }
     assert_operator counts.first, :>, 0
     assert_operator counts.last, :<=, 4
     assert_equal counts.first, counts.last
@@ -189,7 +195,8 @@ class Api::V1::OrderQueriesTest < ActionDispatch::IntegrationTest
 
     def query_get(id = nil, status: :ok)
       with_http_transport(->(_http, _request) { flunk "GET must not send outbound HTTP" }) do
-        get id.nil? ? "/api/v1/orders" : "/api/v1/orders/#{id}", headers: { "ACCEPT" => "application/json" }
+        get id.nil? ? "/api/v1/orders" : "/api/v1/orders/#{id}",
+          headers: { "ACCEPT" => "application/json" }.merge(@api_auth_headers)
       end
       assert_response status
       assert_equal "application/json", response.media_type
@@ -232,6 +239,12 @@ class Api::V1::OrderQueriesTest < ActionDispatch::IntegrationTest
 
     def persisted_snapshot
       [ Order, OrderItem, Product, Restaurant ].map { |model| model.order(:id).map(&:attributes) }
+    end
+
+    def domain_selects(statements)
+      statements.grep(/\A\s*SELECT\b/i).reject do |sql|
+        sql.match?(/\bFROM\s+"?(?:users|api_sessions)"?\b/i)
+      end
     end
 
     def capture_sql

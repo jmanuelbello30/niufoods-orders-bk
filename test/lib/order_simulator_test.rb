@@ -8,26 +8,27 @@ class OrderSimulatorTest < Minitest::Test
 
   PRICES = { 1 => 8990, 2 => 7490, 3 => 6990, 4 => 3990, 5 => 4490,
     6 => 3290, 7 => 9990, 8 => 8990, 9 => 1990, 10 => 1590 }.freeze
+  API_TOKEN = "fictional-simulator-token"
 
   def setup
     @output = StringIO.new
-    @simulator = OrderSimulator.new(seed: 42, output: @output)
+    @simulator = OrderSimulator.new(api_token: API_TOKEN, seed: 42, output: @output)
   end
 
   def test_scenarios_are_reproducible_and_do_not_share_mutable_results
     original = @simulator.scenarios
     assert_equal original, @simulator.scenarios
-    assert_equal original, OrderSimulator.new(seed: "42").scenarios
+    assert_equal original, OrderSimulator.new(api_token: API_TOKEN, seed: "42").scenarios
     original.first[:payload][:items].first[:quantity] = 999
     refute_equal original, @simulator.scenarios
-    unseeded = OrderSimulator.new
+    unseeded = OrderSimulator.new(api_token: API_TOKEN)
     assert_equal unseeded.scenarios, unseeded.scenarios
-    refute_equal @simulator.scenarios, OrderSimulator.new(seed: 43).scenarios
+    refute_equal @simulator.scenarios, OrderSimulator.new(api_token: API_TOKEN, seed: 43).scenarios
   end
 
   def test_valid_scenarios_cover_restaurants_types_prices_and_fictional_data
     [ 6, 8 ].each do |count|
-      valid = OrderSimulator.new(count: count, seed: 42).scenarios.first(count)
+      valid = OrderSimulator.new(api_token: API_TOKEN, count: count, seed: 42).scenarios.first(count)
       valid.each_with_index do |scenario, index|
         payload = scenario.fetch(:payload)
         assert_equal "valid_#{index + 1}", scenario[:name]
@@ -67,21 +68,23 @@ class OrderSimulatorTest < Minitest::Test
   end
 
   def test_rejects_invalid_configuration_before_any_http_request
-    invalid = { count: [ 0, -1, 1.5, "1.5", "bad", "", nil, true ], seed: [ "bad", "1.5", 1.5, true ],
+    invalid = { api_token: [ nil, "", " \t\n", true, 123 ],
+      count: [ 0, -1, 1.5, "1.5", "bad", "", nil, true ], seed: [ "bad", "1.5", 1.5, true ],
       api_base_url: [ nil, "", "ftp://localhost", "http:///", "http://", "http://bad host",
         "http://localhost?x=1", "http://localhost#fragment", "http://user:secret@localhost",
         "http://localhost:0", "http://localhost:65536", "http://localhost:bad" ] }
     with_http_transport(->(*) { flunk "Invalid configuration must not send HTTP" }) do
       invalid.each do |key, values|
-        values.each { |value| assert_raises(ArgumentError, "#{key}=#{value.inspect}") { OrderSimulator.new(**{ key => value }) } }
+        values.each { |value| assert_raises(ArgumentError, "#{key}=#{value.inspect}") { OrderSimulator.new(**{ api_token: API_TOKEN, key => value }) } }
       end
     end
-    assert_equal 11, OrderSimulator.new(count: "06", seed: "-12").scenarios.size
-    assert_equal 6, OrderSimulator.new(count: 1, seed: "+12").scenarios.size
+    assert_equal 11, OrderSimulator.new(api_token: API_TOKEN, count: "06", seed: "-12").scenarios.size
+    assert_equal 6, OrderSimulator.new(api_token: API_TOKEN, count: 1, seed: "+12").scenarios.size
   end
 
   def test_success_and_expected_rejections_return_zero_and_print_safe_results
     assert_equal 0, run_simulator
+    refute_includes @output.string, API_TOKEN
     assert_summary created: 6, sent: 6, expected_rejections: 5
     @simulator.scenarios.each do |scenario|
       line = @output.string.lines.find { |entry| entry.start_with?("scenario=#{scenario[:name]} ") }
@@ -192,7 +195,7 @@ class OrderSimulatorTest < Minitest::Test
   end
 
   def test_transport_uses_direct_post_json_timeouts_and_verified_https_with_prefix
-    @simulator = OrderSimulator.new(api_base_url: "https://localhost:3443/prefix/", seed: 42, output: @output)
+    @simulator = OrderSimulator.new(api_token: API_TOKEN, api_base_url: "https://localhost:3443/prefix/", seed: 42, output: @output)
     assert_equal 0, run_simulator { |scenario, _index, http, request|
       assert_equal [ "localhost", 3443, nil ], [ http.address, http.port, http.proxy_address ]
       assert http.use_ssl?
@@ -201,9 +204,25 @@ class OrderSimulatorTest < Minitest::Test
       assert_instance_of Net::HTTP::Post, request
       assert_equal "/prefix/api/v1/orders", request.path
       assert_equal [ "application/json" ] * 2, [ request["Content-Type"], request["Accept"] ]
+      assert_equal "Bearer #{API_TOKEN}", request["Authorization"]
       assert_equal JSON.generate(scenario[:payload]), request.body
       nil
     }
+  end
+
+  def test_authentication_failures_stop_all_remaining_scenarios_without_printing_response_body
+    [ 401, 403 ].product([ 0, 2, 6, 7 ], [ JSON.generate(errors: [ { field: "token", code: "invalid", message: API_TOKEN } ]), "<html>#{API_TOKEN}</html>" ]).each do |status, target, body|
+      assert_equal 1, run_simulator(expected_requests: target + 1) { |_scenario, index|
+        http_response(status, body) if index == target
+      }
+      created = [ target, 6 ].min
+      assert_summary created: created, sent: created, expected_rejections: [ target - 6, 0 ].max, unexpected_failures: 1
+      assert_includes @output.string, "Authentication failed: check API_TOKEN and permissions."
+      assert_includes @output.string, "http=#{status}"
+      refute_includes @output.string, "invalid_response_json"
+      refute_includes @output.string, API_TOKEN
+      refute_includes @output.string, body
+    end
   end
 
   def test_expected_transport_exceptions_are_sanitized_and_do_not_stop_later_requests
@@ -227,16 +246,34 @@ class OrderSimulatorTest < Minitest::Test
   end
 
   def test_entry_script_exits_two_for_invalid_constructor_configuration
-    saved = ENV.to_h.slice("API_BASE_URL", "ORDER_COUNT", "RANDOM_SEED")
-    ENV.update("API_BASE_URL" => "http://localhost:3000", "ORDER_COUNT" => "0", "RANDOM_SEED" => "42")
+    saved = ENV.to_h.slice("API_TOKEN", "API_BASE_URL", "ORDER_COUNT", "RANDOM_SEED")
+    ENV.update("API_TOKEN" => API_TOKEN, "API_BASE_URL" => "http://localhost:3000", "ORDER_COUNT" => "0", "RANDOM_SEED" => "42")
     with_http_transport(->(*) { flunk "Invalid entry configuration must not send HTTP" }) do
       _stdout, stderr = capture_io do
         assert_equal 2, assert_raises(SystemExit) { load File.expand_path("../../script/simulate_orders.rb", __dir__) }.status
       end
       assert_includes stderr, "Invalid configuration"
+      refute_includes stderr, API_TOKEN
     end
   ensure
-    %w[API_BASE_URL ORDER_COUNT RANDOM_SEED].each { |key| saved.key?(key) ? ENV[key] = saved[key] : ENV.delete(key) }
+    %w[API_TOKEN API_BASE_URL ORDER_COUNT RANDOM_SEED].each { |key| saved.key?(key) ? ENV[key] = saved[key] : ENV.delete(key) }
+  end
+
+  def test_entry_script_exits_two_without_a_token_before_any_http_request
+    saved = ENV.to_h.slice("API_TOKEN", "API_BASE_URL", "ORDER_COUNT", "RANDOM_SEED")
+    ENV.update("API_BASE_URL" => "http://localhost:3000", "ORDER_COUNT" => "6", "RANDOM_SEED" => "42")
+    with_http_transport(->(*) { flunk "Missing token must not send HTTP or log in" }) do
+      [ nil, "", " \t" ].each do |token|
+        ENV["API_TOKEN"] = token
+        stdout, stderr = capture_io do
+          assert_equal 2, assert_raises(SystemExit) { load File.expand_path("../../script/simulate_orders.rb", __dir__) }.status
+        end
+        assert_empty stdout
+      assert_equal "Invalid configuration: API_TOKEN is required; set it to the access_token obtained from POST /api/v1/auth/login\n", stderr
+      end
+    end
+  ensure
+    %w[API_TOKEN API_BASE_URL ORDER_COUNT RANDOM_SEED].each { |key| saved.key?(key) ? ENV[key] = saved[key] : ENV.delete(key) }
   end
 
   private
@@ -259,7 +296,7 @@ class OrderSimulatorTest < Minitest::Test
       http_response(422, JSON.generate(errors: [ { message: "Validation failed" }.merge(scenario[:expected_error]).merge(changes) ]))
     end
 
-    def run_simulator
+    def run_simulator(expected_requests: @simulator.scenarios.size)
       @output.truncate(0)
       @output.rewind
       scenarios = @simulator.scenarios
@@ -272,7 +309,7 @@ class OrderSimulatorTest < Minitest::Test
         response || (scenario[:expected_error] ? rejection_response(scenario) : creation_response(scenario))
       end
       result = with_http_transport(handler) { @simulator.run }
-      assert_equal scenarios.size, requests
+      assert_equal expected_requests, requests
       result
     end
 

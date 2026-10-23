@@ -1,16 +1,20 @@
 require "test_helper"
+require_relative "../../../support/api_authentication_helper"
 require_relative "../../../support/http_transport_helper"
 
 class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
+  include ApiAuthenticationHelper
   include HttpTransportHelper
 
   # Dispatch must follow a real commit, not a savepoint inside the test transaction.
   self.use_transactional_tests = false
 
   setup do
+    @api_auth_headers = api_auth_headers
     @created_order_ids = []
     @http_requests = []
     @transport = ->(http, request) do
+      assert_nil request["Authorization"], "User credentials must not be forwarded to the store"
       @http_requests << [ http, request ]
       body = JSON.parse(request.body)
       http_response(200, JSON.generate(data: {
@@ -310,7 +314,7 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
       previous_ids = Order.ids
       with_http_transport(@transport) do
         post "/api/v1/orders", params: raw ? payload.dup : ActiveSupport::JSON.encode(payload),
-          headers: { "CONTENT_TYPE" => "application/json", "ACCEPT" => "application/json" }
+          headers: { "CONTENT_TYPE" => "application/json", "ACCEPT" => "application/json" }.merge(@api_auth_headers)
       end
     ensure
       @created_order_ids.concat(Order.where.not(id: previous_ids).ids) if previous_ids

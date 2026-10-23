@@ -1,13 +1,16 @@
 require "test_helper"
+require_relative "../../../support/api_authentication_helper"
 require_relative "../../../support/http_transport_helper"
 
 class Api::V1::RetryDispatchTest < ActionDispatch::IntegrationTest
+  include ApiAuthenticationHelper
   include HttpTransportHelper
 
   # Dispatch must run outside a test transaction, after the order is committed.
   self.use_transactional_tests = false
 
   setup do
+    @api_auth_headers = api_auth_headers
     @order = Order.new(
       restaurant: restaurants(:one), order_type: :delivery,
       customer_name: "Test Customer", customer_phone: "+56000000000",
@@ -169,12 +172,13 @@ class Api::V1::RetryDispatchTest < ActionDispatch::IntegrationTest
         assert_equal destination.request_uri, request.path
         assert_equal "application/json", request["Content-Type"]
         assert_equal "application/json", request["Accept"]
+        assert_nil request["Authorization"], "User credentials must not be forwarded to the store"
         assert_equal expected_payload, JSON.parse(request.body)
         @transport.call(http, request)
       end
       with_http_transport(handler) do
         post "/api/v1/orders/#{id}/retry_dispatch", params: payload.nil? ? nil : JSON.generate(payload),
-          headers: { "CONTENT_TYPE" => "application/json", "ACCEPT" => "application/json" }
+          headers: { "CONTENT_TYPE" => "application/json", "ACCEPT" => "application/json" }.merge(@api_auth_headers)
       end
       assert_equal counts, [ Order.count, OrderItem.count ]
       assert_equal before, @order.reload.attributes.slice(*before.keys)
