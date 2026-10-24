@@ -260,6 +260,21 @@ wait "$receiver_pid"
 La detención mediante `SIGINT` o `SIGTERM` espera a que terminen las solicitudes
 en curso. No se crean archivos PID ni datos persistentes.
 
+### Vista de recepciones
+
+Con el receptor iniciado, abrir <http://localhost:4567/>; si se configura
+`STORE_PORT`, usar ese puerto. En otra pestaña, crear una orden desde Swagger
+en <http://localhost:3000/api-docs> y comparar `data.id` de la respuesta 201
+con el número de orden que muestra la tienda. Pulsar **Actualizar** para recargar.
+
+La vista muestra solo órdenes aceptadas por este proceso, sin consultar Rails.
+La hora corresponde a la aceptación en el receptor, en horario de Santiago,
+no a la creación en Rails. Un duplicado conserva la entrada, datos y hora originales.
+Las órdenes y el registro de duplicados se borran al reiniciar. En modo demora,
+la orden aparece después de la aceptación real, incluso si Rails ya tuvo un timeout:
+verla aquí no garantiza que Rails haya recibido la confirmación, ni implica preparación
+o entrega al cliente.
+
 ### Simulación
 
 | Variable | Valor predeterminado | Comportamiento |
@@ -330,6 +345,7 @@ Las pruebas del receptor pueden ejecutarse sin Rails ni PostgreSQL:
 
 ```sh
 ~/.local/bin/mise exec -- bundle exec ruby -Itest test/lib/store_receiver_test.rb
+~/.local/bin/mise exec -- bundle exec ruby -Itest test/lib/store_receiver_view_test.rb
 ```
 
 ## Despacho HTTP síncrono

@@ -320,8 +320,11 @@ Los modos son `success`, `error` y `delay`. El modo error no acepta la orden.
 En demora se acepta después de esperar; un timeout o cierre del emisor no
 cancela esa aceptación posterior. Un reenvío ya aceptado se confirma sin otra
 demora. La memoria de duplicados se limita a pares restaurante/orden en un solo
-proceso, con acceso sincronizado; reiniciarlo borra esa memoria. No se conserva
-el payload ni se añade persistencia.
+proceso, con acceso sincronizado; reiniciarlo borra esa memoria. El mismo registro
+conserva en memoria los campos recibidos del contrato y la hora de aceptación original
+para mostrarlos en `GET /`, sin consultar Rails ni PostgreSQL. Los duplicados no
+reemplazan esos datos. La vista usa `Cache-Control: no-store` y horario de Santiago;
+no se añade persistencia.
 
 ## Interfaz
 

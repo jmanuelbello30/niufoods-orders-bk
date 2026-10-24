@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tienda simulada</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Niu Foods / Receptor local</p>
+          <h1>Tienda simulada</h1>
+          <p class="description">Órdenes aceptadas por el receptor local</p>
+        </div>
+        <a class="refresh" href="/">Actualizar</a>
+      </header>
+
+      <section class="receipt-summary" aria-label="Resumen de recepción">
+        <p><strong id="accepted-count"><%= escape(@orders.length) %></strong> órdenes aceptadas desde el arranque</p>
+        <p>La hora de aceptación corresponde a este receptor, no a la creación de la orden en Rails. La aceptación local no garantiza que Rails haya recibido la confirmación.</p>
+      </section>
+
+      <section class="orders" aria-label="Órdenes aceptadas">
+        <% if @orders.empty? -%>
+          <div class="empty-state">
+            <h2>Aún no hay órdenes aceptadas.</h2>
+            <p>Las nuevas recepciones aparecerán aquí al actualizar la página.</p>
+          </div>
+        <% end -%>
+        <% @orders.each do |record| -%>
+          <% payload = record.fetch(:payload) -%>
+          <% restaurant_code = record.fetch(:restaurant_code) -%>
+          <% accepted_at = TIME_ZONE.to_local(record.fetch(:accepted_at)) -%>
+          <article class="order" data-order-id="<%= escape(payload.fetch("order_id")) %>" data-restaurant-code="<%= escape(restaurant_code) %>">
+            <header class="order-header">
+              <div>
+                <p class="eyebrow"><%= escape(RESTAURANT_NAMES.fetch(restaurant_code)) %> · <%= escape(restaurant_code) %></p>
+                <h2>Orden #<%= escape(payload.fetch("order_id")) %></h2>
+                <p class="order-type"><%= escape(ORDER_TYPES.fetch(payload.fetch("order_type"))) %></p>
+              </div>
+              <p class="acceptance">
+                <span>Aceptada por el receptor</span>
+                <time datetime="<%= escape(accepted_at.iso8601) %>"><%= escape(accepted_at.strftime("%d/%m/%Y %H:%M:%S")) %> <span>America/Santiago (UTC<%= escape(accepted_at.strftime("%:z")) %>)</span></time>
+              </p>
+            </header>
+
+            <dl class="customer">
+              <div>
+                <dt>Cliente</dt>
+                <dd><%= escape(payload.fetch("customer").fetch("name")) %></dd>
+              </div>
+              <div>
+                <dt>Teléfono</dt>
+                <dd><%= escape(payload.fetch("customer").fetch("phone")) %></dd>
+              </div>
+              <% address = payload["delivery_address"] -%>
+              <% unless address.nil? || address.strip.empty? -%>
+                <div class="address">
+                  <dt>Dirección</dt>
+                  <dd><%= escape(address) %></dd>
+                </div>
+              <% end -%>
+            </dl>
+
+            <div class="items-scroll" role="region" aria-label="Productos recibidos" tabindex="0">
+              <table>
+                <caption>Ítems recibidos</caption>
+                <thead>
+                  <tr><th scope="col">Producto (ID)</th><th scope="col">Cantidad</th><th scope="col">Precio unitario recibido</th></tr>
+                </thead>
+                <tbody>
+                  <% payload.fetch("items").each do |item| -%>
+                    <tr>
+                      <td>#<%= escape(item.fetch("product_id")) %></td>
+                      <td><%= escape(item.fetch("quantity")) %></td>
+                      <td><%= money(item.fetch("unit_price")) %></td>
+                    </tr>
+                  <% end -%>
+                </tbody>
+              </table>
+            </div>
+            <footer class="order-total"><span>Total recibido</span><strong><%= money(payload.fetch("total_amount")) %></strong></footer>
+          </article>
+        <% end -%>
+      </section>
+
+      <footer class="local-notice">
+        <p>Simulador local. Las órdenes y el registro de duplicados se borran al reiniciar este proceso. Recibir una orden no implica prepararla ni entregarla al cliente</p>
+      </footer>
+    </main>
+  </body>
+</html>

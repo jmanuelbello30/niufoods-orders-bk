@@ -1,6 +1,6 @@
 require "json"
 require "rack"
-require "set"
+require_relative "store_receiver/view"
 
 class StoreReceiver
   RESTAURANTS = { "PROV" => 1, "LCON" => 2, "NUNO" => 3 }.freeze
@@ -24,19 +24,27 @@ class StoreReceiver
       raise ArgumentError, "delay_seconds must be finite and non-negative"
     end
     @output = output
-    @accepted = Set.new
+    @accepted = {}
     @mutex = Mutex.new
   end
 
   def call(env)
     request = Rack::Request.new(env)
+    if request.get? && request.path_info == "/"
+      orders = @mutex.synchronize { @accepted.values.reverse }
+      return [ 200, { "content-type" => "text/html; charset=utf-8", "cache-control" => "no-store" },
+        [ View.new(orders).render ] ]
+    end
+    if request.get? && request.path_info == "/styles.css"
+      return [ 200, { "content-type" => "text/css; charset=utf-8" }, [ View::STYLES ] ]
+    end
     restaurant = request.path_info.match(%r{\A/restaurants/(PROV|LCON|NUNO)/orders\z})&.[](1)
     return response(404, :not_found) unless restaurant
     return response(405, :method_not_allowed, restaurant: restaurant) unless request.post?
     return response(415, :unsupported_media_type, restaurant: restaurant) unless request.media_type == "application/json"
 
     begin
-      payload = JSON.parse(request.body.read)
+      payload = JSON.parse(request.body.read, freeze: true)
     rescue JSON::ParserError
       return response(400, :invalid_json, restaurant: restaurant)
     end
@@ -52,17 +60,34 @@ class StoreReceiver
     end
 
     key = [ restaurant, order_id ]
-    if @mutex.synchronize { @accepted.include?(key) }
+    if @mutex.synchronize { @accepted.key?(key) }
       return response(200, :duplicate, restaurant: restaurant, order_id: order_id)
     end
     return response(503, :simulated_error, restaurant: restaurant, order_id: order_id) if @mode == "error"
 
     sleep @delay_seconds if @mode == "delay"
-    duplicate = @mutex.synchronize { !@accepted.add?(key) }
+    duplicate = @mutex.synchronize do
+      if @accepted.key?(key)
+        true
+      else
+        @accepted[key.freeze] = {
+          restaurant_code: restaurant.freeze, accepted_at: Time.now.utc.freeze,
+          payload: accepted_payload(payload)
+        }.freeze
+        false
+      end
+    end
     response(200, duplicate ? :duplicate : :accepted, restaurant: restaurant, order_id: order_id)
   end
 
   private
+    def accepted_payload(payload)
+      payload.slice("order_id", "restaurant_id", "order_type", "total_amount", "delivery_address").merge(
+        "customer" => payload.fetch("customer").slice("name", "phone").freeze,
+        "items" => payload.fetch("items").map { |item| item.slice("product_id", "quantity", "unit_price").freeze }.freeze
+      ).freeze
+    end
+
     def valid_payload?(payload)
       return false unless positive_integer?(payload["restaurant_id"])
       return false unless %w[pickup delivery].include?(payload["order_type"])
