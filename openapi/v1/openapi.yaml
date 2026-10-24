@@ -1,0 +1,346 @@
+openapi: 3.0.3
+info:
+  title: API de órdenes Niu Foods
+  version: '1.0.0'
+  description: |
+    API de órdenes para restaurantes con inicio de sesión y autenticación Bearer.
+    Permite crear órdenes y despacharlas al restaurante correspondiente.
+servers:
+  - url: /
+tags:
+  - name: Autenticación
+    description: Obtención manual de una sesión Bearer.
+  - name: Órdenes
+    description: Creación y despacho síncrono de órdenes autenticadas.
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Autenticación]
+      operationId: login
+      summary: Iniciar sesión
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: demo@example.test
+              password: Fictional-password-123
+      responses:
+        '200':
+          description: Sesión creada con expiración absoluta de 8 horas.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                data:
+                  access_token: <TOKEN_RETURNED_BY_LOGIN>
+                  token_type: Bearer
+                  expires_at: '2026-10-23T20:00:00.000Z'
+                  user:
+                    id: 1
+                    email: demo@example.test
+  /api/v1/orders:
+    post:
+      tags: [Órdenes]
+      operationId: createOrder
+      summary: Crear una orden y despacharla
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+            examples:
+              pickup_simple:
+                summary: Retiro simple sin total declarado
+                description: Restaurante 1, un producto 1; total calculado de 8990 CLP.
+                value:
+                  restaurant_id: 1
+                  order_type: pickup
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: 1, quantity: 1 }]
+              delivery_multiple:
+                summary: Despacho con varios productos
+                description: Restaurante 2; 2 × 8990 + 4490 = 22470 CLP, sin total declarado.
+                value:
+                  restaurant_id: 2
+                  order_type: delivery
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  delivery_address: Test Street 123
+                  items: [{ product_id: 1, quantity: 2 }, { product_id: 5, quantity: 1 }]
+              matching_total:
+                summary: Total declarado coincidente
+                description: Mismos productos y cantidades; se conserva el total declarado de 22470 CLP.
+                value:
+                  restaurant_id: 2
+                  order_type: delivery
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  delivery_address: Test Street 123
+                  items: [{ product_id: 1, quantity: 2 }, { product_id: 5, quantity: 1 }]
+                  client_total_amount: 22470
+              mismatch:
+                summary: Total declarado diferente
+                description: Declara 22000 CLP frente a 22470 CLP calculados; responde 422 sin persistir.
+                value:
+                  restaurant_id: 2
+                  order_type: delivery
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  delivery_address: Test Street 123
+                  items: [{ product_id: 1, quantity: 2 }, { product_id: 5, quantity: 1 }]
+                  client_total_amount: 22000
+              missing_delivery_address:
+                summary: Despacho sin dirección
+                description: Omite la dirección obligatoria para delivery; responde 422.
+                value:
+                  restaurant_id: 1
+                  order_type: delivery
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: 1, quantity: 1 }]
+              unknown_restaurant:
+                summary: Restaurante inexistente
+                description: La referencia -1 no existe; responde 422, no un error de ruta.
+                value:
+                  restaurant_id: -1
+                  order_type: pickup
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: 1, quantity: 1 }]
+              unknown_product:
+                summary: Producto inexistente
+                description: La referencia -1 impide obtener el precio del catálogo; responde 422 con todos los errores asociados.
+                value:
+                  restaurant_id: 1
+                  order_type: pickup
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: -1, quantity: 1 }]
+              empty_items:
+                summary: Orden sin ítems
+                description: Un array vacío no cumple la presencia de ítems; responde 422.
+                value:
+                  restaurant_id: 1
+                  order_type: pickup
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: []
+              invalid_quantity:
+                summary: Cantidad cero
+                description: La cantidad debe ser un entero mayor que cero; responde 422.
+                value:
+                  restaurant_id: 1
+                  order_type: pickup
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: 1, quantity: 0 }]
+              duplicate_product:
+                summary: Producto repetido
+                description: Un mismo producto en dos ítems se rechaza con 422, sin combinar cantidades.
+                value:
+                  restaurant_id: 1
+                  order_type: pickup
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: 1, quantity: 1 }, { product_id: 1, quantity: 1 }]
+              invalid_order_type:
+                summary: Tipo de orden inválido
+                description: El string invalid no pertenece al enum; responde 422.
+                value:
+                  restaurant_id: 1
+                  order_type: invalid
+                  customer: { name: Test Customer, phone: '+56000000000' }
+                  items: [{ product_id: 1, quantity: 1 }]
+              incomplete_customer:
+                summary: Cliente incompleto
+                description: El objeto vacío omite nombre y teléfono; responde 422 con ambos errores.
+                value:
+                  restaurant_id: 1
+                  order_type: pickup
+                  customer: {}
+                  items: [{ product_id: 1, quantity: 1 }]
+      responses:
+        '201':
+          description: Orden creada.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+              example:
+                data:
+                  id: 9001
+                  restaurant_id: 1
+                  order_type: pickup
+                  total_amount: 8990
+                  dispatch_status: sent
+                  created_at: '2026-10-23T12:00:00.000Z'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Token opaco de sesión, no JWT, obtenido mediante login. En Authorize pegar
+        solo el token, sin el prefijo Bearer. No se aceptan tokens de ejemplo.
+  headers:
+    NoStore:
+      description: Impide almacenar en caché la respuesta.
+      schema:
+        type: string
+        enum: [no-store]
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          description: Correo del usuario provisionado; se normaliza antes de autenticar.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: Contraseña del usuario existente; el login no impone un mínimo de 12 caracteres.
+    LoginResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [access_token, token_type, expires_at, user]
+          properties:
+            access_token:
+              type: string
+              description: Token opaco; el marcador de ejemplo no es utilizable. Copiar manualmente el valor real.
+              example: <TOKEN_RETURNED_BY_LOGIN>
+            token_type:
+              type: string
+              enum: [Bearer]
+            expires_at:
+              type: string
+              format: date-time
+              description: Expiración absoluta a las 8 horas, ISO 8601 con milisegundos y zona horaria.
+            user:
+              $ref: '#/components/schemas/User'
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+    OrderRequest:
+      allOf:
+        - $ref: '#/components/schemas/OrderAttributes'
+        - oneOf:
+            - $ref: '#/components/schemas/PickupConstraints'
+            - $ref: '#/components/schemas/DeliveryConstraints'
+    OrderAttributes:
+      type: object
+      description: Datos necesarios para crear una orden.
+      required: [restaurant_id, order_type, customer, items]
+      properties:
+        restaurant_id:
+          type: integer
+          format: int64
+          description: ID de un restaurante existente; las referencias inexistentes se rechazan con 422.
+        order_type:
+          type: string
+          enum: [pickup, delivery]
+        customer:
+          $ref: '#/components/schemas/Customer'
+        delivery_address:
+          type: string
+          nullable: true
+          description: Opcional y nullable para pickup; obligatoria y no en blanco para delivery.
+        client_total_amount:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: |
+            Monto opcional en CLP; omitido o null no exige comparación. Si tiene
+            valor, debe coincidir exactamente con el total calculado. Rails admite
+            también un string numérico entero, pero no valores decimales ni strings vacíos.
+        items:
+          type: array
+          minItems: 1
+          description: Al menos un ítem; no puede repetirse product_id, aunque cambie quantity.
+          items:
+            $ref: '#/components/schemas/OrderItemRequest'
+    PickupConstraints:
+      type: object
+      properties:
+        order_type:
+          type: string
+          enum: [pickup]
+    DeliveryConstraints:
+      type: object
+      required: [delivery_address]
+      properties:
+        order_type:
+          type: string
+          enum: [delivery]
+        delivery_address:
+          type: string
+          nullable: false
+          description: Obligatoria; no puede estar vacía ni contener solo espacios.
+    Customer:
+      type: object
+      required: [name, phone]
+      properties:
+        name:
+          type: string
+          description: Obligatorio y no en blanco.
+        phone:
+          type: string
+          description: Obligatorio y no en blanco; no se exige un formato telefónico específico.
+    OrderItemRequest:
+      type: object
+      required: [product_id, quantity]
+      properties:
+        product_id:
+          type: integer
+          format: int64
+          description: ID de un producto existente del catálogo compartido.
+        quantity:
+          type: integer
+          minimum: 1
+          description: Entero positivo; Rails también admite strings numéricos enteros, no decimales.
+    OrderResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/CreatedOrder'
+    CreatedOrder:
+      type: object
+      required: [id, restaurant_id, order_type, total_amount, dispatch_status, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        restaurant_id:
+          type: integer
+          format: int64
+        order_type:
+          type: string
+          enum: [pickup, delivery]
+        total_amount:
+          type: integer
+          minimum: 0
+          description: Total calculado por el servidor en pesos enteros CLP.
+        dispatch_status:
+          type: string
+          enum: [sent, error]
+          description: Resultado persistido del despacho síncrono después de crear la orden.
+        created_at:
+          type: string
+          format: date-time
+          description: Fecha de creación en ISO 8601 con milisegundos y zona horaria.

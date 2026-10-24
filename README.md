@@ -128,8 +128,28 @@ límite sustituyen el almacén por memoria para comprobarlo. No se agrega
 infraestructura nueva.
 
 Angular deberá integrar el login y enviar el encabezado Bearer en el próximo
-incremento; no se implementa frontend en este incremento. Swagger sigue sin
-implementar.
+incremento; no se implementa frontend en este incremento.
+
+## Swagger
+
+Disponible solo en development y test, con Rails iniciado:
+
+- UI: <http://localhost:3000/api-docs>.
+- Especificación OpenAPI 3.0.3: <http://localhost:3000/api-docs/v1/openapi.yaml>, también versionada en `openapi/v1/openapi.yaml` e importable en Swagger Editor.
+
+Provisionar el usuario mediante `demo_user:provision` según «Autenticación».
+En Swagger, ejecutar login con **Try it out / Execute**, copiar manualmente
+`data.access_token`, abrir **Authorize** y pegar solo el token, sin `Bearer`.
+Después seleccionar un ejemplo de creación de orden y usar **Try it out / Execute**.
+El login no autoriza automáticamente otras operaciones ni se persiste la autorización.
+`expires_at` indica el vencimiento absoluto, actualmente de 8 horas; ante 401,
+comprobar el token u obtener otro mediante login y autorizarlo manualmente.
+
+Los ejemplos requieren los seeds de referencia. Ejecutar una orden válida crea
+registros reales. Para obtener `sent`, iniciar el receptor simulado según la sección
+siguiente; detenerlo permite probar un fallo de transporte. HTTP 201 confirma la
+creación, no necesariamente la recepción en tienda: un fallo conserva la orden con
+`dispatch_status: error`. La introducción de Swagger incluye catálogo y preparación.
 
 ## Creación de órdenes
 
@@ -158,9 +178,9 @@ curl -i http://localhost:3000/api/v1/orders \
 ```
 
 Responde HTTP 201 con `data`, que incluye `id`, `restaurant_id`, `order_type`,
-`total_amount`, `client_total_amount`, `dispatch_status` y `created_at`.
+`total_amount`, `dispatch_status` y `created_at`.
 El total de este ejemplo es 22470 CLP. `client_total_amount` es opcional y se
-devuelve como `null` si no se informa o se envía `null`.
+valida y conserva cuando se informa, pero no se devuelve en la respuesta de creación.
 
 El flujo es guardar la orden y sus ítems, confirmar la transacción, despachar
 por HTTP, registrar el resultado y responder. Iniciar primero el receptor

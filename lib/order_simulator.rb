@@ -125,7 +125,6 @@ class OrderSimulator
       end
 
       if created && !expected && %w[sent error].include?(data["dispatch_status"]) &&
-          data["client_total_amount"] == scenario[:payload][:client_total_amount] &&
           (!scenario[:payload].key?(:client_total_amount) || data["total_amount"] == scenario[:payload][:client_total_amount])
         result = data["dispatch_status"] == "error" ? "created_dispatch_error" : "created"
       elsif status == 422 && expected && valid_errors?(errors) &&
@@ -150,11 +149,10 @@ class OrderSimulator
       rescue ArgumentError
         return false
       end
-      %w[id restaurant_id order_type total_amount client_total_amount dispatch_status created_at].all? { |key| data.key?(key) } &&
+      %w[id restaurant_id order_type total_amount dispatch_status created_at].all? { |key| data.key?(key) } &&
         data["id"].is_a?(Integer) && data["id"].positive? &&
         data["restaurant_id"].is_a?(Integer) && data["restaurant_id"] == payload[:restaurant_id] &&
         data["order_type"] == payload[:order_type] && data["total_amount"].is_a?(Integer) && data["total_amount"] >= 0 &&
-        (data["client_total_amount"].nil? || (data["client_total_amount"].is_a?(Integer) && data["client_total_amount"] >= 0)) &&
         %w[pending sent error].include?(data["dispatch_status"])
     end
 

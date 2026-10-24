@@ -82,7 +82,7 @@ class OrderSimulatorTest < Minitest::Test
     assert_equal 6, OrderSimulator.new(api_token: API_TOKEN, count: 1, seed: "+12").scenarios.size
   end
 
-  def test_success_and_expected_rejections_return_zero_and_print_safe_results
+  def test_success_without_response_client_total_and_expected_rejections_return_zero_and_print_safe_results
     assert_equal 0, run_simulator
     refute_includes @output.string, API_TOKEN
     assert_summary created: 6, sent: 6, expected_rejections: 5
@@ -152,7 +152,7 @@ class OrderSimulatorTest < Minitest::Test
   def test_creation_schema_requires_all_fields_and_valid_types
     invalid = { id: [ nil, 0, -1, "1", 1.0 ], restaurant_id: [ nil, 2, "1", 1.0 ],
       order_type: [ nil, "delivery", 0 ], total_amount: [ nil, -1, "0", 0.0 ],
-      client_total_amount: [ -1, "0", 0.0 ], dispatch_status: [ nil, "unknown" ],
+      dispatch_status: [ nil, "unknown" ],
       created_at: [ nil, 123, "", "not-a-date", "2026-99-22T12:00:00.000Z", "2026-10-22T12:00:00.000", "2026-10-22" ] }
     invalid.each do |key, values|
       [ :missing, *values ].each do |value|
@@ -168,10 +168,9 @@ class OrderSimulatorTest < Minitest::Test
     end
   end
 
-  def test_client_total_is_preserved_and_declared_total_must_match
-    [ [ 0, { client_total_amount: 0 } ], [ 1, { client_total_amount: nil } ],
-      [ 1, { total_amount: 0 } ], [ 1, { client_total_amount: 0 } ] ].each do |target, changes|
-      assert_equal 1, run_simulator { |scenario, index| creation_response(scenario, **changes) if index == target }
+  def test_response_total_must_match_declared_input_total
+    [ 0, total(@simulator.scenarios[1][:payload]) + 1 ].each do |amount|
+      assert_equal 1, run_simulator { |scenario, index| creation_response(scenario, total_amount: amount) if index == 1 }
       assert_summary created: 6, sent: 6, expected_rejections: 5, unexpected_failures: 1
     end
   end
@@ -284,7 +283,7 @@ class OrderSimulatorTest < Minitest::Test
     def creation_data(scenario)
       payload = scenario[:payload]
       { id: 123, restaurant_id: payload[:restaurant_id], order_type: payload[:order_type],
-        total_amount: total(payload), client_total_amount: payload[:client_total_amount],
+        total_amount: total(payload),
         dispatch_status: "sent", created_at: "2026-10-22T12:00:00.000Z" }
     end
 

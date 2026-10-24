@@ -108,6 +108,7 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Respuestas exitosas bajo `data`; errores bajo `errors`.
 - Cada error contiene `field`, `code` y `message`.
 - HTTP 201 si se creó la orden, incluso si falló el despacho.
+- La respuesta HTTP 201 incluye `id`, `restaurant_id`, `order_type`, `total_amount`, `dispatch_status` y `created_at`; no incluye `client_total_amount`, que se conserva como entrada opcional y dato persistido.
 - HTTP 422 por validación; HTTP 400 para JSON mal formado.
 - `client_total_amount` es opcional; si se informa, debe ser un entero no negativo. Si se omite o coincide exactamente con `total_amount` en pesos enteros CLP, la orden se procesa conforme a las demás validaciones.
 - Si `client_total_amount` difiere de `total_amount`, responder HTTP 422 sin persistir la orden ni sus ítems y sin intentar el despacho. El error bajo `errors` utiliza `field: "client_total_amount"`, `code: "total_mismatch"` y un `message` que indica el monto declarado y el calculado, ambos en CLP.

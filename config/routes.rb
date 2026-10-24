@@ -1,4 +1,9 @@
 Rails.application.routes.draw do
+  if Rails.env.development? || Rails.env.test?
+    mount Rswag::Api::Engine => "/api-docs"
+    mount Rswag::Ui::Engine => "/api-docs"
+  end
+
   namespace :api do
     namespace :v1 do
       post "auth/login", to: "auth#login"

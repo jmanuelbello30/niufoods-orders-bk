@@ -38,7 +38,7 @@ module Api
         if result.order.persisted?
           Orders::Dispatch.new(result.order).call
           render json: { data: result.order.as_json(only: %i[
-            id restaurant_id order_type total_amount client_total_amount dispatch_status created_at
+            id restaurant_id order_type total_amount dispatch_status created_at
           ]) }, status: :created
         else
           render json: { errors: result.errors }, status: :unprocessable_content

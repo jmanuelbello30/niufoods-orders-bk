@@ -30,6 +30,9 @@ gem "image_processing", "~> 1.2"
 # gem "rack-cors"
 
 group :development, :test do
+  gem "rswag-api", "~> 2.17.0"
+  gem "rswag-ui", "~> 2.17.0"
+
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
 
@@ -41,4 +44,8 @@ group :development, :test do
 
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
+end
+
+group :test do
+  gem "openapi_parser", "~> 2.3"
 end

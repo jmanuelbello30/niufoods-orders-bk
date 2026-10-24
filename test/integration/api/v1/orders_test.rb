@@ -75,10 +75,8 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
       assert_equal 4990, order.total_amount
       if attributes[:client_total_amount].nil?
         assert_nil order.client_total_amount
-        assert_nil response.parsed_body.dig("data", "client_total_amount")
       else
         assert_equal 4990, order.client_total_amount
-        assert_equal 4990, response.parsed_body.dig("data", "client_total_amount")
       end
     end
   end
@@ -218,7 +216,7 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
       http_response(503, JSON.generate(errors: [ { message: "Private store failure details" } ]))
     end
 
-    order = post_order(dispatch_status: "error")
+    order = post_order(@payload.merge(client_total_amount: 4990), dispatch_status: "error")
 
     assert_equal 1, @http_requests.size
     assert_equal "error", response.parsed_body.dig("data", "dispatch_status")
@@ -226,6 +224,7 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
     assert_equal "Store returned HTTP 503", order.last_dispatch_error
     assert_equal restaurants(:one).id, order.restaurant_id
     assert_equal 4990, order.total_amount
+    assert_equal 4990, order.reload.client_total_amount
     item = order.order_items.sole
     assert_equal [ order.id, products(:one).id, 1, 4990 ],
       [ item.order_id, item.product_id, item.quantity, item.unit_price ]
@@ -330,7 +329,8 @@ class Api::V1::OrdersTest < ActionDispatch::IntegrationTest
       assert_equal "application/json", response.media_type
       assert_equal [ "data" ], response.parsed_body.keys
       data = response.parsed_body.fetch("data")
-      assert_equal %w[client_total_amount created_at dispatch_status id order_type restaurant_id total_amount], data.keys.sort
+      assert_not data.key?("client_total_amount"), "Creation must not expose the declared total"
+      assert_equal %w[created_at dispatch_status id order_type restaurant_id total_amount], data.keys.sort
       order = Order.find(data.fetch("id"))
       assert_equal order.as_json(only: data.keys), data
       assert_equal dispatch_status, data.fetch("dispatch_status")
