@@ -10,18 +10,38 @@ de cambios y verificación de cada resultado antes de continuar.
 
 ## Entorno informado
 
-Pendiente de verificar localmente:
-
-- Ruby 3.4.11.
-- Bundler 4.0.22.
-- Rails 8.1.4.
-- PostgreSQL 18.6.
+- Ruby 3.4.11, fijado en `mise.toml` y `.ruby-version`.
+- Bundler 4.0.22, registrado en `Gemfile.lock`.
+- Rails 8.1.4, resuelto en `Gemfile.lock`.
+- PostgreSQL 18.6 en el entorno local, comprobado con `SHOW server_version`,
+  y cliente `psql` 18.6. El proyecto no fija la versión del servidor ni establece
+  una versión mínima comprobada.
 
 Entorno de trabajo informado: Ubuntu/WSL, con OpenCode y VS Code.
 
+### Configuración local
+
+`config/database.yml` configura `niufoods_orders_development` para development
+y `niufoods_orders_test` para test. Por defecto no especifica usuario,
+contraseña ni host: usa el usuario del sistema operativo y el socket local de
+PostgreSQL. `DATABASE_URL` puede sobrescribir el destino y otros parámetros de
+esa configuración; no basta con elegir `RAILS_ENV` para garantizar la base usada.
+
+Antes de migraciones, seeds o aprovisionamiento, revisar la conexión y confirmar
+que apunta a la base de este proyecto. Para pruebas, comprobar también
+`DATABASE_URL` y usar exclusivamente `niufoods_orders_test`, nunca desarrollo,
+producción ni bases ajenas. No ejecutar operaciones destructivas sobre bases
+existentes o ajenas al proyecto.
+
+Las variables se proporcionan mediante el entorno de la terminal. El proyecto
+no usa dotenv ni incluye `.env.example`. Si Ruby no está en `PATH`, puede
+anteponerse `~/.local/bin/mise exec --` a los comandos Ruby, Bundler o Rails.
+
 ## Modelo acordado
 
-El modelo representa el diseño previsto, todavía no implementado.
+El modelo de órdenes descrito a continuación está implementado en los modelos,
+migraciones y `db/schema.rb`. La autenticación añade `users` y `api_sessions`;
+su comportamiento se describe en «Autenticación».
 
 Todas las tablas tienen `id` de tipo `bigint`, y `created_at` y `updated_at`
 de tipo `datetime`. Las referencias corresponden a columnas `bigint` con
@@ -76,6 +96,45 @@ Unicidad compuesta de `order_id` y `product_id`.
 - Product tiene muchos OrderItems.
 - OrderItem pertenece a Order y Product.
 
+## Catálogo de referencia
+
+`db/seeds.rb` define estos 10 productos, con precios enteros en CLP:
+
+| ID | Producto | SKU | Precio CLP |
+| --- | --- | --- | --- |
+| 1 | Niu Roll Salmón | SKU-001 | 8990 |
+| 2 | California Ebi | SKU-002 | 7490 |
+| 3 | Avocado Roll | SKU-003 | 6990 |
+| 4 | Nigiri Salmón x2 | SKU-004 | 3990 |
+| 5 | Gyozas de Pollo x5 | SKU-005 | 4490 |
+| 6 | Edamame | SKU-006 | 3290 |
+| 7 | Bowl Salmón Teriyaki | SKU-007 | 9990 |
+| 8 | Bowl Pollo Teriyaki | SKU-008 | 8990 |
+| 9 | Bebida 350 ml | SKU-009 | 1990 |
+| 10 | Agua Mineral 500 ml | SKU-010 | 1590 |
+
+Los tres restaurantes y sus destinos locales de despacho son:
+
+| ID | Restaurante | Código | `dispatch_url` |
+| --- | --- | --- | --- |
+| 1 | Niu Foods Providencia | PROV | `http://localhost:4567/restaurants/PROV/orders` |
+| 2 | Niu Foods Las Condes | LCON | `http://localhost:4567/restaurants/LCON/orders` |
+| 3 | Niu Foods Ñuñoa | NUNO | `http://localhost:4567/restaurants/NUNO/orders` |
+
+Con las migraciones aplicadas y la conexión de desarrollo verificada, la carga
+se realiza con `RAILS_ENV=development bin/rails db:seed`. Usa las validaciones
+de los modelos y una única transacción para evitar cargas parciales. No envía
+solicitudes HTTP ni provisiona usuarios.
+
+La carga es idempotente: busca coincidencias por ID o SKU para productos y por
+ID o código para restaurantes. Si todos los atributos de referencia coinciden,
+conserva el registro sin duplicarlo ni cambiar sus timestamps. Si un ID, SKU o
+código está ocupado por otro registro, o difiere algún atributo de referencia,
+falla con `Seed conflict` y revierte la carga. No borra ni sobrescribe registros;
+conserva los registros ajenos sin conflictos. Al terminar ajusta las secuencias
+PostgreSQL al máximo ID de cada tabla del catálogo para evitar colisiones en
+las siguientes inserciones automáticas.
+
 ## Reglas de negocio
 
 - Restaurante y productos deben existir.
@@ -110,6 +169,8 @@ Unicidad compuesta de `order_id` y `product_id`.
 - HTTP 201 si se creó la orden, incluso si falló el despacho.
 - La respuesta HTTP 201 incluye `id`, `restaurant_id`, `order_type`, `total_amount`, `dispatch_status` y `created_at`; no incluye `client_total_amount`, que se conserva como entrada opcional y dato persistido.
 - HTTP 422 por validación; HTTP 400 para JSON mal formado.
+- HTTP 422 con `code: "invalid_structure"` para JSON válido con estructura incorrecta, por ejemplo una raíz que no sea objeto o un ítem que no sea objeto. Los errores indican el campo o índice afectado.
+- JSON malformado o cuerpo vacío en creación responde HTTP 400 con `field: "base"`, `code: "invalid_json"` y `message: "Malformed JSON body"`. No se exponen detalles internos de la excepción.
 - `client_total_amount` es opcional; si se informa, debe ser un entero no negativo. Si se omite o coincide exactamente con `total_amount` en pesos enteros CLP, la orden se procesa conforme a las demás validaciones.
 - Si `client_total_amount` difiere de `total_amount`, responder HTTP 422 sin persistir la orden ni sus ítems y sin intentar el despacho. El error bajo `errors` utiliza `field: "client_total_amount"`, `code: "total_mismatch"` y un `message` que indica el monto declarado y el calculado, ambos en CLP.
 - Referencias a restaurante o productos inexistentes en el POST invalidan la orden y generan HTTP 422.
@@ -159,8 +220,35 @@ RAILS_ENV=development DEMO_USER_EMAIL=demo@example.test \
   DEMO_USER_PASSWORD='Fictional-password-123' bin/rails demo_user:provision
 ```
 
-La integración del login en Angular corresponde al próximo incremento y aún
-no está implementada. Swagger tampoco está implementado en este incremento.
+Angular ya integra el login real y el envío del encabezado Bearer; véase
+«Interfaz». Swagger está disponible localmente según la sección siguiente.
+
+### Swagger
+
+Disponible solo en development y test, con Rails iniciado:
+
+- UI local: `http://localhost:3000/api-docs`.
+- Archivo versionado: `openapi/v1/openapi.yaml`.
+- URL de la especificación: `http://localhost:3000/api-docs/v1/openapi.yaml`.
+- Formato: OpenAPI 3.0.3, importable en Swagger Editor.
+
+La especificación actual documenta exactamente `POST /api/v1/auth/login` y
+`POST /api/v1/orders`. Sus bloques de respuestas
+documentan solo el éxito principal: HTTP 200 para login y HTTP 201 para creación.
+No constituye una descripción completa de los endpoints ni de los errores de
+la API; los contratos adicionales se conservan en este documento.
+
+Tras provisionar un usuario, ejecutar login con **Try it out / Execute**, copiar
+manualmente `data.access_token` y pegar solo el token, sin `Bearer`, en
+**Authorize**. El login no autoriza automáticamente otras operaciones y la UI
+no persiste la autorización. Al vencer la sesión, obtener otro token y
+autorizarlo manualmente. Las respuestas de login y creación incluyen
+`Cache-Control: no-store`.
+
+Los ejemplos de órdenes presuponen el catálogo de referencia. Ejecutar una
+orden válida crea registros reales; HTTP 201 confirma creación, no recepción
+en tienda. Para obtener `sent`, el receptor debe estar disponible y confirmar
+el despacho; un fallo esperado conserva la orden con estado `error`.
 
 ### Consultas de órdenes
 
@@ -206,7 +294,7 @@ no consulta ni ejecuta reintentos de despacho.
 - `API_TOKEN` es obligatorio, no vacío y sin valor predeterminado. Se obtiene por login y se exporta manualmente antes de ejecutar el simulador; se envía solo en `Authorization: Bearer <token>`. El simulador no imprime el token ni hace login automático. Fuera del entorno local debe usarse HTTPS.
 - `ORDER_COUNT` es un entero positivo y vale 6 por defecto: cubre los tres restaurantes del catálogo y ambos tipos. Cantidades mayores repiten esos cruces.
 - `RANDOM_SEED` es un entero opcional. La semilla usada se imprime y permite reproducir los payloads, no los IDs ni los resultados del servidor.
-- Se usan IDs y precios del dataset de referencia, ítems distintos con cantidades variables y solo clientes y direcciones ficticios. Se alterna `client_total_amount` omitido y coincidente.
+- Se usan IDs y precios del dataset de referencia, entre 1 y 3 productos distintos por orden, cantidades de 1 a 4 por ítem y solo clientes y direcciones ficticios. Se alterna `client_total_amount` omitido y coincidente.
 - Los precios locales solo construyen el monto declarado de la simulación; la API calcula el total real. Los casos coincidentes y las referencias válidas presuponen los seeds sin cambios.
 - Después se ejecutan cantidad cero (`items[0].quantity`/`greater_than`), producto inexistente (`items[0].product_id`/`blank`), producto repetido (`items`/`invalid`, mensaje `must not contain duplicate products`), delivery sin dirección (`delivery_address`/`blank`) y monto diferente (`client_total_amount`/`total_mismatch`).
 - Un 422 solo comprueba un escenario inválido si la respuesta tiene errores con `field`, `code` y `message` válidos y contiene el error concreto esperado. Una aceptación o rechazo por otro motivo es inesperado.
@@ -220,6 +308,17 @@ esperados y fallos inesperados. Un timeout o una respuesta incomprensible puede
 ocultar una creación ya realizada: no se repite el POST automáticamente.
 Ejecutarlo contra una API real crea órdenes; repetirlo, incluso con la misma
 semilla, crea órdenes nuevas. No borra registros ni reinicia bases.
+
+Por cada POST se imprimen escenario, restaurante, tipo, HTTP, ID, total y estado
+de despacho cuando están disponibles; los errores se muestran con
+`field`/`code`/`message`, sin imprimir payload, cliente ni dirección. El resumen
+usa `created`, `sent`, `error`, `pending`, `expected_rejections` y
+`unexpected_failures`. Una creación con despacho `error` incrementa tanto
+`created` como `error` y no obliga por sí sola a terminar con código 1. Una
+respuesta de creación válida para un escenario que debía rechazarse cuenta
+como creación y también como fallo inesperado. Los cinco casos inválidos se
+añaden a `ORDER_COUNT`: la configuración predeterminada realiza once POST.
+La conexión es directa, sin proxy de entorno; los timeouts no son un límite global.
 
 ## Integración
 
@@ -241,7 +340,8 @@ la responsabilidad de crear y persistir. Una orden rechazada no se despacha.
 `Orders::Dispatch` exige una orden persistida y realiza el envío fuera de
 transacciones de base de datos y callbacks. Recarga los datos persistidos y no
 reenvía una orden que ya esté en `sent`. El emisor usa HTTP o HTTPS con
-verificación de certificados y no recalcula precios históricos.
+verificación de certificados y no recalcula precios históricos. La conexión es
+directa, sin proxy de entorno, con `Content-Type` y `Accept` en `application/json`.
 
 Un resultado HTTP 2xx solo confirma el despacho si el cuerpo es JSON válido,
 `data.accepted` es el booleano `true` y `order_id` y `restaurant_id` son enteros
@@ -264,6 +364,23 @@ de duplicado mediante el endpoint de reintento manual; la memoria del receptor
 se pierde al reiniciar.
 
 ### Contrato del receptor simulado
+
+`script/store_receiver.rb` inicia un proceso Rack/Puma independiente con las
+dependencias existentes, sin cargar Rails ni consultar PostgreSQL. Se inicia
+desde la raíz con `bundle exec ruby script/store_receiver.rb`
+y escucha solo en loopback (`127.0.0.1`). `Ctrl+C`, `SIGINT` o `SIGTERM` lo
+detienen esperando las solicitudes en curso; no crea archivos PID ni persiste datos.
+
+| Variable | Valor predeterminado | Valores permitidos |
+| --- | --- | --- |
+| `STORE_PORT` | `4567` | Entero entre 1 y 65535. |
+| `STORE_MODE` | `success` | `success`, `error` o `delay`. |
+| `STORE_DELAY_SECONDS` | `6` | Número finito no negativo de segundos; solo se aplica en `delay`. |
+
+Cambiar el puerto requiere ajustar el destino del emisor: los seeds usan 4567.
+Es un simulador local sin autenticación, no un receptor de producción. La consola
+solo registra restaurante, identificador válido y resultado, nunca cliente,
+teléfono, dirección ni payload completo.
 
 El receptor independiente recibe `POST` con `Content-Type: application/json`
 en `/restaurants/PROV/orders`, `/restaurants/LCON/orders` y
@@ -326,18 +443,39 @@ para mostrarlos en `GET /`, sin consultar Rails ni PostgreSQL. Los duplicados no
 reemplazan esos datos. La vista usa `Cache-Control: no-store` y horario de Santiago;
 no se añade persistencia.
 
+La vista se abre en `http://localhost:4567/` (o el `STORE_PORT` configurado) y
+se recarga manualmente con **Actualizar**. Su hora es la de aceptación en el
+receptor, en `America/Santiago`, no la de creación en Rails. Una recepción puede
+aparecer después de un timeout del emisor: verla aquí no garantiza que Rails
+haya recibido la confirmación. La memoria crece con las recepciones y no se
+comparte entre procesos.
+
 ## Interfaz
 
-- Backend primero.
-- Preferencia Angular con soporte + Bootstrap, sin signals.
-- Decisión final al completar el flujo backend.
-- Alternativa Rails ERB si falta tiempo.
-- Conservar soporte de vistas en Rails.
-- No construir ambas interfaces.
+El frontend Angular está en un repositorio separado:
+<https://github.com/jmanuelbello30/niufoods-orders-ft>. Ya integra login real
+contra Rails, listado de órdenes con contadores, detalle en un diálogo,
+actualización manual y reintento manual del despacho. No hay creación ni
+edición de órdenes en Angular: la creación se realiza por API o Swagger.
+
+En desarrollo se abre en `http://localhost:4200/`; el proxy envía `/api` y sus
+rutas anidadas a `http://localhost:3000` sin reescribirlas. Esa configuración
+no configura el backend ni el build de producción.
+
+La pestaña conserva token y vencimiento en `sessionStorage`; al recargar valida
+la sesión con `GET /api/v1/auth/me`. La expiración no se renueva automáticamente.
+El cierre de sesión solicita la revocación remota y borra la sesión local,
+avisando si no pudo confirmar la revocación. `sessionStorage` no protege frente
+a XSS y cerrar la pestaña no equivale a revocar la sesión persistida en Rails.
+
+El dashboard presenta montos enteros CLP y fechas en `America/Santiago`.
+El reintento actualiza el estado según la respuesta, no solo el HTTP 200;
+ante un resultado no confirmado exige actualizar el listado con éxito antes
+de habilitar otro intento. No hay actualización ni reintentos automáticos.
 
 ## Entregables
 
-- Diagramas.
+- Diagramas: pendientes; no hay diagramas incorporados en el repositorio.
 - Seeds del dataset de referencia.
 - API.
 - Receptor.
