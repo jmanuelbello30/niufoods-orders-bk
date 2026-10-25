@@ -36,3 +36,6 @@
 /config/credentials.yml.enc
 /config/credentials/*.key
 /config/credentials/*.yml.enc
+
+#Inore *:Zone.Identifier metadata
+*:Zone.Identifier
