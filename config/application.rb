@@ -6,6 +6,11 @@ require "rails/all"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+# Tests must not read developer dotenv files; integration tests use temporary fixtures.
+if defined?(Dotenv::Rails) && Dotenv::Rails.env.test?
+  Dotenv::Rails.files = [ File.expand_path("../test/fixtures/files/empty.env", __dir__) ]
+end
+
 module NiufoodsOrders
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.

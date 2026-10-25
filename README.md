@@ -108,7 +108,7 @@ La instalación puede tardar varios minutos.
 
 ```sh
 sudo apt install build-essential autoconf libssl-dev libyaml-dev zlib1g-dev \
-  libffi-dev libgmp-dev rustc curl ca-certificates git tzdata libvips-dev
+  libffi-dev libgmp-dev rustc curl ca-certificates git nano tzdata libvips-dev
 ```
 
 **Paso 3. Instalar mise.**
@@ -418,7 +418,49 @@ sin errores antes de seguir.
 bundle install
 ```
 
-**Paso 8. Comprobar que no se usará una conexión de otro proyecto.**
+**Paso 8. Copiar la plantilla de configuración solo si no existe `.env`.**
+
+Si ya tienes un archivo `.env` en esta carpeta, **no ejecutes este comando**:
+continúa al paso 9 para revisar el archivo existente sin sobrescribirlo.
+Solo si todavía no existe, copia la plantilla:
+
+```sh
+cp .env.example .env
+```
+
+`.env.example` es una plantilla de cinco líneas comentadas, sin credenciales ni
+contraseña predeterminada. Sirve como documentación: Rails no carga esa plantilla.
+El archivo `.env` es privado y Git lo ignora; no lo agregues al repositorio.
+
+**Paso 9. Elegir y guardar las credenciales locales.**
+
+Abre el archivo con Nano, un editor de texto de la terminal:
+
+```sh
+nano .env
+```
+
+Busca las líneas de `DEMO_USER_EMAIL` y `DEMO_USER_PASSWORD`, quita el `#` inicial
+de ambas y completa sus valores. Este es un ejemplo ficticio orientativo, no una
+contraseña predeterminada de la plantilla; elige tus propias credenciales:
+
+```dotenv
+DEMO_USER_EMAIL=demo@example.test
+DEMO_USER_PASSWORD='Fictional-password-123'
+```
+
+Si el valor contiene espacios o `#`, usa comillas para conservarlo completo.
+Usa un correo válido y una contraseña de al menos 12 caracteres y como máximo.
+Guarda las credenciales elegidas: las usarás en Swagger y Angular. 
+Para guardar en nano, pulsa Ctrl + O y luego Enter. Para salir, pulsa Ctrl + X.
+
+En desarrollo, Rails carga `.env` automáticamente al arrancar mediante
+`dotenv-rails`. No necesitas ejecutar otro comando para cargarlo. Las variables
+que ya estén definidas en la terminal tienen prioridad y siguen funcionando:
+el archivo no las reemplaza. Esta guía solo necesita las dos variables anteriores;
+no agregues configuraciones de conexión de otros proyectos.
+
+**Paso 10. Comprobar que no se usará una conexión de otro proyecto.**
 
 Si ya usabas el computador para otros proyectos, pueden haber quedado guardadas
 instrucciones que apuntan a otra base. El siguiente comando muestra solo sus
@@ -428,10 +470,10 @@ nombres, nunca contraseñas ni direcciones:
 ruby -e 'configured = %w[DATABASE_URL PGHOST PGPORT PGUSER PGPASSWORD].select { |name| ENV.key?(name) }; puts(configured.empty? ? "No connection overrides" : "Connection overrides: #{configured.join(", ")}")'
 ```
 
-Si aparece `No connection overrides`, sigue directamente al paso 10. Si aparece
-`Connection overrides`, realiza el paso 9 antes de continuar con esta guía local.
+Si aparece `No connection overrides`, sigue directamente al paso 12. Si aparece
+`Connection overrides`, realiza el paso 11 antes de continuar con esta guía local.
 
-**Paso 9. Desactivar esas instrucciones solo en esta terminal, si aparecen.**
+**Paso 11. Desactivar esas instrucciones solo en esta terminal, si aparecen.**
 
 Hazlo únicamente para seguir la conexión local de esta guía. No borra bases ni
 archivos y no cambia otros procesos; quita esas variables de la ventana actual.
@@ -441,7 +483,7 @@ Si necesitas conservar una conexión personalizada, detente y pide que la revise
 unset DATABASE_URL PGHOST PGPORT PGUSER PGPASSWORD
 ```
 
-**Paso 10. Revisar dónde se guardarán los datos.**
+**Paso 12. Revisar dónde se guardarán los datos.**
 
 Este comando muestra la configuración de conexión de Rails sin imprimir contraseñas.
 No crea bases ni modifica órdenes.
@@ -454,9 +496,11 @@ El nombre de la base debe ser `niufoods_orders_development`. En la configuració
 local no se indica otro servidor: se usa PostgreSQL de tu computador.
 Si aparecen otra base o un servidor que no reconoces, detente y revisa la conexión.
 
-No es necesario crear un archivo `.env`: el proyecto no lo carga automáticamente.
+Esta comprobación ya incluye la configuración que Rails carga al arrancar.
+Si un archivo de configuración existente define otra conexión, quitar variables
+de la terminal no basta: detente y pide que revisen esa configuración.
 
-**Paso 11. Crear las bases del proyecto.**
+**Paso 13. Crear las bases del proyecto.**
 
 Prepara el espacio que la aplicación utilizará para guardar la información.
 Si ya existen, no es necesario borrarlas.
@@ -465,7 +509,7 @@ Si ya existen, no es necesario borrarlas.
 RAILS_ENV=development bin/rails db:create
 ```
 
-**Paso 12. Preparar las tablas.**
+**Paso 14. Preparar las tablas.**
 
 Las tablas organizan los usuarios, restaurantes, productos y órdenes dentro de la
 base de datos. Este comando aplica la estructura definida por el proyecto.
@@ -474,29 +518,46 @@ base de datos. Este comando aplica la estructura definida por el proyecto.
 RAILS_ENV=development bin/rails db:migrate
 ```
 
-**Paso 13. Cargar los datos de ejemplo.**
+**Paso 15. Cargar los datos de ejemplo y crear la cuenta para iniciar sesión.**
 
-Se agregan 3 restaurantes y 10 productos con sus precios para probar el flujo.
-Este comando no envía órdenes a las tiendas. Puede repetirse si los datos siguen
-coincidiendo; si encuentra un conflicto, se detiene sin sobrescribirlos.
+El comando carga 3 restaurantes y 10 productos con sus precios y crea la cuenta con
+el correo indicado si no existe. No envía órdenes a las tiendas. Puede repetirse
+si los datos del catálogo siguen coincidiendo; si encuentra un conflicto, se
+detiene sin sobrescribirlos.
+
+Rails leerá las credenciales que guardaste en el paso 9, salvo que la terminal
+ya tenga definidas esas variables, que tienen prioridad.
 
 ```sh
 RAILS_ENV=development bin/rails db:seed
 ```
 
-**Paso 14. Crear la cuenta para iniciar sesión.**
+Si el usuario ya existe, el seed deja intactos su contraseña y sus demás atributos:
+utiliza las credenciales originales para iniciar sesión. Editar `.env` nunca
+cambia la contraseña de un usuario existente. Si ambas variables
+`DEMO_USER_EMAIL` y `DEMO_USER_PASSWORD` están sin definir tanto en los archivos
+que carga Rails como en la terminal (por ejemplo, siguen comentadas en `.env`),
+carga solo el catálogo, sin crear usuario.
+Si proporcionas solo una, alguna está vacía o las credenciales son inválidas,
+falla antes de modificar datos y no muestra la contraseña.
 
-La siguiente cuenta es ficticia y sirve para la evaluación local. Guarda el correo
-y la contraseña: los ingresarás en Swagger y, si lo instalas, en Angular.
+La provisión de usuarios demo solo está permitida en `development` y `test`, nunca
+en producción. En producción no se carga esta gema ni se leen archivos locales
+de entorno: los secretos se configuran en el entorno del despliegue, sin provisionar demos.
+
+**Paso 16. Crear la cuenta por separado con la tarea (opcional).**
+
+Omite este paso si ya creaste la cuenta con el seed. La tarea sigue disponible
+para crearla por separado, por ejemplo, si cargaste solo el catálogo en el paso 15.
+Completa y guarda ambas variables en `.env` como en el paso 9 antes de ejecutarla:
+la tarea las lee al arrancar Rails. Exige credenciales válidas; no permite valores vacíos.
 
 ```sh
-RAILS_ENV=development DEMO_USER_EMAIL=demo@example.test \
-  DEMO_USER_PASSWORD='Fictional-password-123' bin/rails demo_user:provision
+RAILS_ENV=development bin/rails demo_user:provision
 ```
 
-Debe aparecer `Demo user provisioned`. Si dice que el usuario ya existe, el comando
-no cambia su contraseña: utiliza las credenciales con las que fue creado.
-Si eliges otra contraseña, debe tener al menos 12 caracteres y como máximo 72 bytes.
+Debe aparecer `Demo user provisioned`. A diferencia del seed, la tarea falla si el
+usuario ya existe y no modifica sus datos: utiliza las credenciales originales.
 
 ## 3. Abrir el proyecto y enviar una orden
 
@@ -567,7 +628,8 @@ usa la dirección completa de Swagger.
 **Paso 2. Iniciar sesión.**
 
 Abre `POST /api/v1/auth/login` y pulsa **Try it out**. En el cuadro de datos,
-utiliza el correo y la contraseña de la cuenta que creaste:
+utiliza el correo y la contraseña de la cuenta que creaste. Si elegiste otros
+valores o el usuario ya existía, reemplaza el ejemplo por sus credenciales originales:
 
 ```json
 {
@@ -622,7 +684,8 @@ guardadas en la base de la API. Recibir una orden no significa prepararla ni ent
 La interfaz se instala por separado: sigue el README del
 [repositorio frontend](https://github.com/jmanuelbello30/niufoods-orders-ft).
 Cuando esté funcionando, abre <http://localhost:4200>, inicia sesión con la cuenta
-creada, pulsa **Actualizar** y abre el detalle de la orden usando el icono de ojo.
+creada usando las credenciales elegidas, o las originales si ya existía, pulsa
+**Actualizar** y abre el detalle de la orden usando el icono de ojo.
 
 No necesitas instalar Angular para completar los cinco pasos anteriores.
 Para consultar órdenes no hace falta tener la tienda encendida; para que un envío
@@ -662,7 +725,8 @@ como antes y mantén encendidas la API y la tienda. Los datos son ficticios.
 **Paso 1. Obtener un token.**
 
 La respuesta tiene el mismo contenido que el login de Swagger. El código `200`
-indica que el acceso fue correcto.
+indica que el acceso fue correcto. Si elegiste otras credenciales o el usuario ya
+existía, reemplaza el correo y la contraseña del ejemplo por sus valores originales.
 
 ```sh
 curl -i http://localhost:3000/api/v1/auth/login \
@@ -781,6 +845,11 @@ responde `409` sin reenviarla.
 
 El simulador es un programa que envía ejemplos a la API. No reemplaza a la tienda:
 debes mantener encendidas la API y la tienda para obtener envíos exitosos.
+
+El simulador y el receptor de la tienda son programas independientes: no cargan
+Rails ni leen `.env` automáticamente. Sus variables, como `API_TOKEN`,
+`ORDER_COUNT`, `STORE_MODE` y `STORE_DELAY_SECONDS`, se proporcionan desde la
+terminal como muestran estos comandos, no desde el archivo de Rails.
 
 **Paso 1. Usar una terminal con `API_TOKEN` guardado.**
 

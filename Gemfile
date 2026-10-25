@@ -30,6 +30,7 @@ gem "image_processing", "~> 1.2"
 # gem "rack-cors"
 
 group :development, :test do
+  gem "dotenv-rails", "~> 3.2.0"
   gem "rswag-api", "~> 2.17.0"
   gem "rswag-ui", "~> 2.17.0"
 

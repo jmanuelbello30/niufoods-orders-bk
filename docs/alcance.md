@@ -33,9 +33,31 @@ que apunta a la base de este proyecto. Para pruebas, comprobar también
 producción ni bases ajenas. No ejecutar operaciones destructivas sobre bases
 existentes o ajenas al proyecto.
 
-Las variables se proporcionan mediante el entorno de la terminal. El proyecto
-no usa dotenv ni incluye `.env.example`. Si Ruby no está en `PATH`, puede
-anteponerse `~/.local/bin/mise exec --` a los comandos Ruby, Bundler o Rails.
+`dotenv-rails` 3.2.0 pertenece solo al grupo `development, test`. En desarrollo
+carga los archivos de entorno al arrancar Rails con la precedencia normal de la
+gema: primero `.env.development.local`, luego `.env.local`,
+`.env.development` y `.env`. Los primeros valores encontrados prevalecen;
+`overwrite` permanece en `false`, por lo que las variables ya presentes en
+`ENV` (por ejemplo, desde la terminal) tienen prioridad y siguen funcionando.
+
+`.env.example` es una plantilla documental de cinco líneas comentadas, con
+`DEMO_USER_EMAIL=` y `DEMO_USER_PASSWORD=` sin valores predeterminados. No se
+carga automáticamente. El tutorial indica copiarla a `.env` solo si este no
+existe, descomentar ambas variables y completar valores propios. Git ignora
+`.env` y `.env.*`, excepto `.env.example`; los secretos no se versionan.
+En producción no se carga la gema ni se leen archivos locales de entorno:
+los secretos se proporcionan en el entorno del despliegue y no se provisionan demos.
+
+En test, `config/application.rb` configura `Dotenv::Rails.files` con el archivo
+vacío y seguro versionado `test/fixtures/files/empty.env`, antes del callback
+`before_configuration`. Se usa el entorno efectivo de la integración de dotenv,
+que también reconoce las tareas Rake de test antes de que cambie `Rails.env`.
+Esto evita leer los archivos de entorno del desarrollador;
+las pruebas de integración de dotenv usan archivos temporales como fixtures.
+Es un aislamiento interno de las pruebas, no un paso de configuración del tutorial.
+
+Si Ruby no está en `PATH`, puede anteponerse `~/.local/bin/mise exec --` a los
+comandos Ruby, Bundler o Rails.
 
 ## Modelo acordado
 
@@ -123,8 +145,13 @@ Los tres restaurantes y sus destinos locales de despacho son:
 
 Con las migraciones aplicadas y la conexión de desarrollo verificada, la carga
 se realiza con `RAILS_ENV=development bin/rails db:seed`. Usa las validaciones
-de los modelos y una única transacción para evitar cargas parciales. No envía
-solicitudes HTTP ni provisiona usuarios.
+de los modelos y una única transacción para evitar cargas parciales de catálogo
+y usuario demo. No envía solicitudes HTTP. Si `DEMO_USER_EMAIL` y
+`DEMO_USER_PASSWORD` están ambas sin definir, carga solo el catálogo. Si se
+proporcionan ambas, valida las credenciales antes de escribir y crea el usuario
+si no existe; si ya existe, conserva su contraseña y todos sus atributos.
+Una sola variable definida, valores vacíos o credenciales inválidas hacen fallar
+la carga antes de modificar datos, sin mostrar la contraseña.
 
 La carga es idempotente: busca coincidencias por ID o SKU para productos y por
 ID o código para restaurantes. Si todos los atributos de referencia coinciden,
@@ -207,19 +234,28 @@ coordinado entre procesos y se pierde al reiniciar. En test se configura
 `NullStore`; las pruebas del límite sustituyen el almacén por memoria. No se
 agrega infraestructura nueva.
 
-El usuario de demostración se provisiona explícitamente con
-`bin/rails demo_user:provision`, indicando `DEMO_USER_EMAIL` y
-`DEMO_USER_PASSWORD`. Ambas variables son obligatorias y no tienen valores
-predeterminados; la contraseña requiere al menos 12 caracteres. El correo se
-normaliza quitando espacios extremos y pasando a minúsculas. Si el usuario
-ya existe, la tarea falla sin sobrescribir sus credenciales. No se crea desde
-los seeds. Ejemplo ficticio para desarrollo, tras verificar la conexión:
+El servicio compartido `DemoUsers::Provision` se usa desde seeds y desde la
+tarea independiente opcional `bin/rails demo_user:provision`. Los seeds usan
+`allow_existing: true` para conservar usuarios existentes; la tarea falla si
+el usuario ya existe, sin sobrescribir sus credenciales. La provisión solo está
+permitida en `development` y `test`.
+
+La tarea exige `DEMO_USER_EMAIL` y `DEMO_USER_PASSWORD`, ambas definidas y no
+vacías, sin valores predeterminados. Usa las validaciones del modelo: contraseña
+de al menos 12 caracteres y como máximo 72 bytes, almacenada mediante bcrypt;
+el correo se normaliza quitando espacios extremos y pasando a minúsculas.
+Los errores de configuración o validación fallan antes de escribir datos.
+En desarrollo, tanto seeds como la tarea leen `.env` al arrancar Rails, sin
+reemplazar variables ya definidas en la terminal. Tras guardar las credenciales
+elegidas y verificar la conexión, la tarea opcional se ejecuta con:
 
 ```sh
-RAILS_ENV=development DEMO_USER_EMAIL=demo@example.test \
-  DEMO_USER_PASSWORD='Fictional-password-123' bin/rails demo_user:provision
+RAILS_ENV=development bin/rails demo_user:provision
 ```
 
+Editar `.env` nunca cambia la contraseña de un usuario existente. Para iniciar
+sesión en Swagger o Angular se usan las credenciales elegidas al crear la cuenta,
+o las originales si ya existía, no necesariamente los valores actuales del archivo.
 Angular ya integra el login real y el envío del encabezado Bearer; véase
 «Interfaz». Swagger está disponible localmente según la sección siguiente.
 
@@ -287,7 +323,8 @@ memoria, pero reiniciarlo elimina esa protección.
 ### Simulación de órdenes
 
 El cliente independiente `script/simulate_orders.rb` usa Net::HTTP y JSON, sin
-cargar Rails ni consultar PostgreSQL. Envía únicamente `POST /api/v1/orders`;
+cargar Rails ni consultar PostgreSQL. No carga `.env` automáticamente: recibe
+sus variables desde la terminal. Envía únicamente `POST /api/v1/orders`;
 no consulta ni ejecuta reintentos de despacho.
 
 - `API_BASE_URL` vale `http://localhost:3000` por defecto. Debe ser una URL HTTP/HTTPS con host y puerto válido, sin credenciales, query ni fragmento; admite un prefijo de ruta antes de `/api/v1/orders`.
@@ -366,7 +403,8 @@ se pierde al reiniciar.
 ### Contrato del receptor simulado
 
 `script/store_receiver.rb` inicia un proceso Rack/Puma independiente con las
-dependencias existentes, sin cargar Rails ni consultar PostgreSQL. Se inicia
+dependencias existentes, sin cargar Rails ni consultar PostgreSQL. No carga `.env`
+automáticamente: recibe `STORE_MODE` y las demás variables desde la terminal. Se inicia
 desde la raíz con `bundle exec ruby script/store_receiver.rb`
 y escucha solo en loopback (`127.0.0.1`). `Ctrl+C`, `SIGINT` o `SIGTERM` lo
 detienen esperando las solicitudes en curso; no crea archivos PID ni persiste datos.

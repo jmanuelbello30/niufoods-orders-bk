@@ -1,3 +1,8 @@
+demo_user = unless ENV["DEMO_USER_EMAIL"].nil? && ENV["DEMO_USER_PASSWORD"].nil?
+  DemoUsers::Provision.new(email: ENV["DEMO_USER_EMAIL"], password: ENV["DEMO_USER_PASSWORD"], allow_existing: true).validate!
+end
+demo_user_result = nil
+
 products = [
   [ 1, "Niu Roll Salmón", "SKU-001", 8990 ],
   [ 2, "California Ebi", "SKU-002", 7490 ],
@@ -36,7 +41,18 @@ ActiveRecord::Base.transaction(requires_new: true) do
     end
   end
 
+  demo_user_result = demo_user.call if demo_user
+
   [ Product, Restaurant ].each do |model|
     model.connection.reset_pk_sequence!(model.table_name)
   end
+end
+
+case demo_user_result
+when :created
+  puts "Demo user provisioned"
+when :existing
+  puts "Existing demo user preserved; credentials were not changed"
+else
+  puts "Demo user skipped; set DEMO_USER_EMAIL and DEMO_USER_PASSWORD or run bin/rails demo_user:provision"
 end

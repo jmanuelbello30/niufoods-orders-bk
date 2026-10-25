@@ -1,5 +1,10 @@
 ENV["RAILS_ENV"] ||= "test"
+ENV.delete("DEMO_USER_EMAIL")
+ENV.delete("DEMO_USER_PASSWORD")
 require_relative "../config/environment"
+unless Rails.env.test? && ActiveRecord::Base.connection_db_config.database.to_s.match?(/\Aniufoods_orders_test(?:_\d+)?\z/)
+  abort "Tests require an isolated niufoods_orders_test database"
+end
 require "rails/test_help"
 require_relative "support/api_authentication_helper"
 

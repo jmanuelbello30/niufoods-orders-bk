@@ -41,6 +41,8 @@ class ApiDocumentationTest < ActionDispatch::IntegrationTest
     script = <<~RUBY
       require "rack/mock"
       abort "Documentation engines loaded" if defined?(Rswag)
+      abort "Dotenv loaded in production" if defined?(Dotenv)
+      abort "Demo credentials inherited" if ENV.key?("DEMO_USER_EMAIL") || ENV.key?("DEMO_USER_PASSWORD")
       request = Rack::MockRequest.new(Rails.application)
       %w[/api-docs /api-docs/index.html /api-docs/v1/openapi.yaml /api-docs/swagger-ui-bundle.js].each do |path|
         response = request.get("https://www.example.com\#{path}")
@@ -48,7 +50,8 @@ class ApiDocumentationTest < ActionDispatch::IntegrationTest
       end
     RUBY
     output, errors, status = Open3.capture3(
-      { "RAILS_ENV" => "production", "SECRET_KEY_BASE_DUMMY" => "1" },
+      { "RAILS_ENV" => "production", "SECRET_KEY_BASE_DUMMY" => "1",
+        "DEMO_USER_EMAIL" => nil, "DEMO_USER_PASSWORD" => nil },
       RbConfig.ruby, Rails.root.join("bin/rails").to_s, "runner", script
     )
     assert status.success?, "Production documentation check failed: #{output}\n#{errors}"
