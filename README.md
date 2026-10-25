@@ -964,5 +964,11 @@ e IP, aplicado por proceso, no globalmente. Fuera del entorno local se requiere 
 **8. Pruebas automatizadas con Minitest.** 
  Cubren el cálculo de totales, las validaciones, la autenticación y el despacho de órdenes, incluidos los escenarios de error. Las respuestas de la tienda se simulan durante las pruebas, sin enviar órdenes reales.
 
+**9. Política de comparación de totales.** 
+Para la política ante la diferencias de montos informada por el usuario y la API, se decidió lo siguiente: 
+El total siempre se va a calcular con los precios del catálogo entregado.
+Si el usuario o canal informa un total diferente, se rechaza la orden para evitar procesarla por un momento indebido.
+El mensaje de la respuesta indica la diferencia del porque no se procesa la orden. (Esta politica se puede ver mas detallada en docs/alcance.md)
+
 Los contratos completos, el catálogo y las limitaciones detalladas se conservan
 en [docs/alcance.md](docs/alcance.md).
