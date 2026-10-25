@@ -1,4 +1,4 @@
-# Niu Foods Orders
+# Niu Foods Orders - API
 
 ## 1. Qué hace el proyecto
 
@@ -854,45 +854,45 @@ cambiarlo, pero no cambia automáticamente las direcciones guardadas por los see
 
 ## 4. Decisiones técnicas relevantes
 
-**Rails y PostgreSQL tienen responsabilidades distintas.** Rails recibe y valida
+**1.Rails y PostgreSQL tienen responsabilidades distintas.** Rails recibe y valida
 las solicitudes. PostgreSQL guarda la información. La API y Angular están separados
 para que distintas interfaces puedan usar las mismas reglas de negocio.
 
-**Guardar la orden ocurre antes de enviarla.** La orden y sus ítems se guardan como
+**2. Guardar la orden ocurre antes de enviarla.** La orden y sus ítems se guardan como
 una sola operación: si algo falla durante ese guardado, no queda una orden parcial.
 Después de confirmarlo, Rails llama al servicio de despacho. El código separa esa
 creación (`Orders::Create`) del envío (`Orders::Dispatch`) para mantener claras
 ambas responsabilidades y los controladores enfocados en coordinar las solicitudes.
 
-**Los precios quedan asociados a la orden.** Cada ítem conserva el precio utilizado
+**3. Los precios quedan asociados a la orden.** Cada ítem conserva el precio utilizado
 al comprar; un cambio posterior del catálogo no cambia ese precio histórico.
 Los montos se manejan como pesos chilenos enteros, sin centavos. Si el canal informa
 un total, Rails lo compara con el que calcula y rechaza las diferencias.
 
-**El envío es inmediato y se espera su resultado.** Se eligió un despacho síncrono
+**4. El envío es inmediato y se espera su resultado.** Se eligió un despacho síncrono
 para mantener sencillo el alcance: la solicitud espera mientras se intenta enviar.
 La conexión tiene un límite de 2 segundos; lectura y escritura, de 5 segundos cada
 una. Son límites por operación, no una duración máxima total. No hay reintentos
 automáticos ni seguimiento de redirecciones; el reintento es manual.
 
-**Una respuesta de la tienda debe confirmar la orden correcta.** No basta con
+**5. Una respuesta de la tienda debe confirmar la orden correcta.** No basta con
 recibir HTTP 200: se valida que el contenido confirme la aceptación y que los
 identificadores coincidan. El receptor reconoce duplicados por tienda y número de
 orden, sin crear otra entrada ni cambiar sus datos u hora originales. Ese registro
 vive solo en memoria y se borra al reiniciar el receptor.
 
-**Swagger facilita la evaluación.** Permite iniciar sesión y crear órdenes desde
+**6. Swagger facilita la evaluación.** Permite iniciar sesión y crear órdenes desde
 el navegador. Está disponible solo en development y test. La especificación
 [OpenAPI](openapi/v1/openapi.yaml) documenta esas dos operaciones y también se
 puede descargar en <http://localhost:3000/api-docs/v1/openapi.yaml>.
 
-**Hay límites intencionales.** No se garantiza entrega exactamente una vez ni se
+**7. Hay límites intencionales.** No se garantiza entrega exactamente una vez ni se
 coordinan globalmente los envíos simultáneos. Todos los usuarios autenticados
 comparten acceso a las órdenes; no hay roles ni separación por restaurante.
 El listado no tiene paginación. El límite de login es de 10 intentos por minuto
 e IP, aplicado por proceso, no globalmente. Fuera del entorno local se requiere HTTPS.
 
-**Pruebas automatizadas con Minitest.** 
+**8. Pruebas automatizadas con Minitest.** 
  Cubren el cálculo de totales, las validaciones, la autenticación y el despacho de órdenes, incluidos los escenarios de error. Las respuestas de la tienda se simulan durante las pruebas, sin enviar órdenes reales.
 
 Los contratos completos, el catálogo y las limitaciones detalladas se conservan
