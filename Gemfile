@@ -48,5 +48,5 @@ group :development, :test do
 end
 
 group :test do
-  gem "openapi_parser", "~> 2.3"
+  gem "openapi_parser", "~> 2.7"
 end
